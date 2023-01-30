@@ -1125,6 +1125,7 @@ impl ChainEndpoint for CosmosSdkChain {
         }
 
         let consensus_state = AnyConsensusState::decode_vec(&res.value).map_err(Error::decode)?;
+        println!("consensus_state: {:?}", consensus_state);
 
         if !matches!(consensus_state, AnyConsensusState::Solomachine(_)) {
             return Err(Error::consensus_state_type_mismatch(
@@ -1140,6 +1141,8 @@ impl ChainEndpoint for CosmosSdkChain {
             }
             IncludeProof::No => Ok((consensus_state, None)),
         }
+        */
+        Ok((consensus_state, None))
     }
 
     fn query_client_connections(

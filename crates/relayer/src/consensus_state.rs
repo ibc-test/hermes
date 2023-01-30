@@ -23,6 +23,9 @@ use ibc_relayer_types::mock::consensus_state::MOCK_CONSENSUS_STATE_TYPE_URL;
 use ibc_relayer_types::timestamp::Timestamp;
 use ibc_relayer_types::Height;
 use serde::{Deserialize, Serialize};
+use ibc_relayer_types::clients::ics06_solomachine::{ConsensusState as SmConsensusState, SOLOMACHINE_CONSENSUS_STATE_TYPE_URL};
+use ibc_proto::ibc::lightclients::solomachine::v1::ConsensusState as RawSmConsensusState;
+
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
