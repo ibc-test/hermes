@@ -293,6 +293,9 @@ pub fn list_keys(config: &ChainConfig) -> Result<Vec<(String, AnySigningKeyPair)
         ChainType::Substrate => {
             unimplemented!()
         }
+        ChainType::Near => {
+            unimplemented!()
+        }
     };
     Ok(keys)
 }

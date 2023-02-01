@@ -1,6 +1,7 @@
 use crate::prelude::*;
 use serde::{Deserialize, Serialize};
 use core::time::Duration;
+use ed25519_dalek::PUBLIC_KEY_LENGTH;
 use crate::core::ics02_client::client_state::{
     ClientState as Ics2ClientState, UpgradeOptions as CoreUpgradeOptions,
 };
@@ -63,6 +64,17 @@ pub struct ClientState {
     pub frozen_sequence: u64,
     pub consensus_state: ConsensusState,
     pub allow_update_after_proposal: bool,
+}
+
+impl Default for ClientState {
+    fn default() -> Self {
+        Self {
+            sequence: 1,
+            frozen_sequence: 0,
+            consensus_state: Default::default(),
+            allow_update_after_proposal: false
+        }
+    }
 }
 
 impl Ics2ClientState for ClientState {
@@ -164,6 +176,12 @@ impl From<ClientState> for Any {
 
 #[derive(Copy, Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct PublicKey(pub tendermint::PublicKey);
+
+impl Default for PublicKey {
+    fn default() -> Self {
+        PublicKey(tendermint::PublicKey::Ed25519(ed25519_dalek::PublicKey::from_bytes(&[0u8; PUBLIC_KEY_LENGTH]).unwrap()))
+    }
+}
 
 impl PublicKey {
     /// Protobuf [`Any`] type URL for Ed25519 public keys
@@ -281,6 +299,17 @@ pub struct ConsensusState {
     pub root: CommitmentRoot,
 }
 
+impl Default for ConsensusState {
+    fn default() -> Self {
+        Self {
+            public_key: Default::default(),
+            diversifier: "".to_string(),
+            timestamp: 1,
+            root: Default::default()
+        }
+    }
+}
+
 impl ConsensusState {
     pub fn new(public_key: PublicKey, diversifier: String, timestamp: u64) -> Self {
 
@@ -378,6 +407,18 @@ pub struct Header {
     pub new_diversifier: String,
 }
 
+// impl Default for Header {
+//     fn default() -> Self {
+//         Self {
+//             sequence: 1,
+//             timestamp: 1,
+//             signature: vec![1,2,3],
+//             new_public_key: Some(PublicKey::default()),
+//             new_diversifier: "".to_string()
+//         }
+//     }
+// }
+
 impl crate::core::ics02_client::header::Header for Header {
     fn client_type(&self) -> ClientType {
         ClientType::Solomachine
@@ -456,7 +497,7 @@ impl From<Header> for RawHeader {
             sequence: value.sequence,
             timestamp: value.timestamp,
             signature: value.signature,
-            new_public_key: Some(value.new_public_key.unwrap().to_any().unwrap()),
+            new_public_key: value.new_public_key.map(|public_key| public_key.to_any().unwrap()),
             new_diversifier: value.new_diversifier,
         }
     }

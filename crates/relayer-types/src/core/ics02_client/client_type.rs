@@ -9,6 +9,7 @@ use super::error::Error;
 pub enum ClientType {
     Tendermint = 1,
     Solomachine = 2,
+    Near,
 
     #[cfg(any(test, feature = "mocks"))]
     Mock = 9999,
@@ -17,6 +18,7 @@ pub enum ClientType {
 impl ClientType {
     const TENDERMINT_STR: &'static str = "07-tendermint";
     const SOLOMACHINE_STR: &'static str = "06-solomachine";
+    const NEAR_STR: &'static str = "12-near";
 
     #[cfg_attr(not(test), allow(dead_code))]
     const MOCK_STR: &'static str = "9999-mock";
@@ -26,6 +28,7 @@ impl ClientType {
         match self {
             Self::Tendermint => Self::TENDERMINT_STR,
             Self::Solomachine => Self::SOLOMACHINE_STR,
+            Self::Near => Self::NEAR_STR,
 
             #[cfg(any(test, feature = "mocks"))]
             Self::Mock => Self::MOCK_STR,
@@ -46,6 +49,7 @@ impl core::str::FromStr for ClientType {
         match s {
             Self::TENDERMINT_STR => Ok(Self::Tendermint),
             Self::SOLOMACHINE_STR => Ok(Self::Solomachine),
+            Self::NEAR_STR => Ok(Self::Near),
 
             #[cfg(any(test, feature = "mocks"))]
             Self::MOCK_STR => Ok(Self::Mock),

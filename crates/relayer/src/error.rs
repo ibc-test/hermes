@@ -568,6 +568,13 @@ define_error! {
 
         QueriedProofNotFound
             |_| { "Requested proof with query but no proof was returned." },
+
+        ReportError
+            { error: String }
+            |e| {
+                format_args!("Report Error: ({})", e.error)
+            },
+
     }
 }
 

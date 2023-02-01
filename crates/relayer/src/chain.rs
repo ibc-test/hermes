@@ -7,6 +7,7 @@ pub mod requests;
 pub mod runtime;
 pub mod substrate;
 pub mod tracking;
+pub mod near;
 
 use serde::{de::Error, Deserialize, Serialize};
 
@@ -20,6 +21,7 @@ pub enum ChainType {
     /// Chains based on the Cosmos SDK
     CosmosSdk,
     Substrate,
+    Near
 }
 
 impl<'de> Deserialize<'de> for ChainType {
@@ -33,6 +35,7 @@ impl<'de> Deserialize<'de> for ChainType {
         match s.as_str() {
             "cosmossdk" => Ok(Self::CosmosSdk),
             "substrate" => Ok(Self::Substrate),
+            "near" => Ok(Self::Near),
 
             // NOTE(new): Add a case here
             _ => Err(D::Error::unknown_variant(&original, &["cosmos-sdk"])), // NOTE(new): mention the new variant here

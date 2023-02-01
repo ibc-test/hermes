@@ -5,12 +5,12 @@ use crate::tx_msg::encode_message;
 
 use core::{convert::TryFrom, fmt};
 use ibc_proto::ibc::core::commitment::v1::MerkleProof as RawMerkleProof;
-use serde::{Deserialize, Serialize};
+use serde::{de, Deserialize, Deserializer, Serialize};
 use subtle_encoding::{Encoding, Hex};
 
 use super::merkle::MerkleProof;
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct CommitmentRoot {
     #[serde(serialize_with = "crate::serializers::ser_hex_upper")]
@@ -110,7 +110,7 @@ impl TryFrom<CommitmentProofBytes> for RawMerkleProof {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Hash, Deserialize, Default)]
+#[derive(Clone, PartialEq, Eq, Hash, Default)]
 pub struct CommitmentPrefix {
     bytes: Vec<u8>,
 }
@@ -144,6 +144,15 @@ impl fmt::Debug for CommitmentPrefix {
             Ok(s) => write!(f, "{s}"),
             Err(_e) => write!(f, "<not valid UTF8: {:?}>", self.as_bytes()),
         }
+    }
+}
+
+impl<'de> Deserialize<'de> for CommitmentPrefix {
+
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
+        CommitmentPrefix::try_from(
+            String::deserialize(deserializer)?.as_bytes().to_vec()
+        ).map_err(de::Error::custom)
     }
 }
 
