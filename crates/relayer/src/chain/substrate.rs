@@ -68,6 +68,13 @@ use subxt::{
 };
 use subxt::{tx::PairSigner, OnlineClient, SubstrateConfig};
 use tracing::info;
+use ibc_relayer_types::clients::ics06_solomachine::{Header as SmHeader, SignBytes, HeaderData};
+use ibc_relayer_types::clients::ics06_solomachine::HeaderData as SmHeaderData;
+use hdpath::StandardHDPath;
+use crate::config::AddressType;
+
+
+
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SubLightBlock {}
@@ -1240,8 +1247,8 @@ impl ChainEndpoint for SubstrateChain {
         // let a = parity_scale_codec::Decode::decode::<substrate::timestamp::calls::Set>(&mut block.unwrap().block.extrinsics[0]);
 
         Ok(ChainStatus {
-            height: ICSHeight::new(0, u64::from(block.unwrap().block.header.number)).unwrap(),
-            timestamp: Timestamp::default(),
+           height: ICSHeight::new(0, u64::from(block.unwrap().block.header.number)).unwrap(),
+           timestamp: Timestamp::default(),
         })
     }
 
