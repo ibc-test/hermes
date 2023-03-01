@@ -505,12 +505,35 @@ dependencies = [
 
 [[package]]
 name = "borsh"
+version = "0.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "15bf3650200d8bffa99015595e10f1fbd17de07abbc25bb067da79e769939bfa"
+dependencies = [
+ "borsh-derive 0.9.3",
+ "hashbrown 0.11.2",
+]
+
+[[package]]
+name = "borsh"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40f9ca3698b2e4cb7c15571db0abc5551dca417a21ae8140460b50309bb2cc62"
 dependencies = [
- "borsh-derive",
+ "borsh-derive 0.10.2",
  "hashbrown 0.13.2",
+]
+
+[[package]]
+name = "borsh-derive"
+version = "0.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6441c552f230375d18e3cc377677914d2ca2b0d36e52129fe15450a2dce46775"
+dependencies = [
+ "borsh-derive-internal 0.9.3",
+ "borsh-schema-derive-internal 0.9.3",
+ "proc-macro-crate 0.1.5",
+ "proc-macro2",
+ "syn",
 ]
 
 [[package]]
@@ -519,10 +542,21 @@ version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "598b3eacc6db9c3ee57b22707ad8f6a8d2f6d442bfe24ffeb8cbb70ca59e6a35"
 dependencies = [
- "borsh-derive-internal 0.10.0",
- "borsh-schema-derive-internal 0.10.0",
+ "borsh-derive-internal 0.10.2",
+ "borsh-schema-derive-internal 0.10.2",
  "proc-macro-crate 0.1.5",
  "proc-macro2",
+ "syn",
+]
+
+[[package]]
+name = "borsh-derive-internal"
+version = "0.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5449c28a7b352f2d1e592a8a28bf139bc71afb0764a14f3c02500935d8c44065"
+dependencies = [
+ "proc-macro2",
+ "quote",
  "syn",
 ]
 
@@ -531,6 +565,17 @@ name = "borsh-derive-internal"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "186b734fa1c9f6743e90c95d7233c9faab6360d1a96d4ffa19d9cfd1e9350f8a"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "borsh-schema-derive-internal"
+version = "0.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cdbd5696d8bfa21d53d9fe39a714a18538bad11492a42d066dbbc395fb1951c0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1453,6 +1498,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "90e5c1c8368803113bf0c9584fc495a58b86dc8a29edbf8fe877d21d9507e797"
 
 [[package]]
+name = "elastic-array"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d63720ea2bc2e1b79f7aa044d9dc0b825f9ccb6930b32120f8fb9e873aa84bc"
+
+[[package]]
 name = "elasticlunr-rs"
 version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2157,7 +2208,7 @@ version = "0.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab5ef0d4909ef3724cc8cce6ccc8572c5c817592e9285f5464f8e86f8bd3726e"
 dependencies = [
- "ahash",
+ "ahash 0.7.6",
 ]
 
 [[package]]
@@ -2558,7 +2609,7 @@ version = "0.25.0"
 source = "git+https://github.com/octopus-network/ibc-proto-rs?branch=ibc#abd03be87a54e72fbfb79d6c9d053173eaee7a6a"
 dependencies = [
  "base64 0.13.1",
- "borsh 0.10.0",
+ "borsh 0.10.2",
  "bytes",
  "flex-error",
  "parity-scale-codec",
@@ -2579,8 +2630,10 @@ dependencies = [
  "base64 0.12.3",
  "bech32",
  "bitcoin",
+ "borsh 0.9.3",
  "bs58",
  "bytes",
+ "chrono",
  "crossbeam-channel 0.5.6",
  "digest 0.10.6",
  "dirs",
@@ -2610,6 +2663,7 @@ dependencies = [
  "near-crypto",
  "near-jsonrpc-client",
  "near-jsonrpc-primitives",
+ "near-light-client",
  "near-primitives",
  "num-bigint 0.4.3",
  "num-rational 0.4.1",
@@ -2753,7 +2807,7 @@ source = "git+https://github.com/octopus-network/substrate-ibc.git?branch=master
 dependencies = [
  "frame-benchmarking",
  "frame-support",
- "ibc 0.26.0",
+ "ibc",
  "ibc-proto",
  "parity-scale-codec",
  "scale-info",
@@ -3842,6 +3896,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "near-light-client"
+version = "0.1.0"
+source = "git+https://github.com/octopus-network/near-light-client-rs#d8305a98f558d3066f05635f249196ddc05c5409"
+dependencies = [
+ "borsh 0.9.3",
+ "bs58",
+ "byteorder",
+ "ed25519-dalek",
+ "elastic-array",
+ "sha2 0.10.6",
+]
+
+[[package]]
 name = "near-primitives"
 version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4280,7 +4347,7 @@ dependencies = [
  "frame-benchmarking",
  "frame-support",
  "frame-system",
- "ibc 0.26.0",
+ "ibc",
  "ibc-proto",
  "ibc-support",
  "log",
@@ -5896,7 +5963,7 @@ name = "sp-api-proc-macro"
 version = "4.0.0-dev"
 source = "git+https://github.com/paritytech/substrate.git?branch=polkadot-v0.9.38#18bb7c7c841b101c19a8d1881b893ae8e37de460"
 dependencies = [
- "blake2",
+ "blake2 0.10.6",
  "proc-macro-crate 1.3.1",
  "proc-macro2",
  "quote",
@@ -6337,7 +6404,7 @@ dependencies = [
  "bytes",
  "impl-trait-for-tuples",
  "parity-scale-codec",
- "primitive-types",
+ "primitive-types 0.12.1",
  "sp-externalities 0.13.0 (git+https://github.com/paritytech/substrate.git?branch=polkadot-v0.9.38)",
  "sp-runtime-interface-proc-macro 6.0.0 (git+https://github.com/paritytech/substrate.git?branch=polkadot-v0.9.38)",
  "sp-std 5.0.0 (git+https://github.com/paritytech/substrate.git?branch=polkadot-v0.9.38)",

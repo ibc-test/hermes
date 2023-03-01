@@ -27,3 +27,4 @@ mc.log
 
 # Ignore OSX .DS_Store file
 .DS_Store
+tmp/

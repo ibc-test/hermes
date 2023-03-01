@@ -1,0 +1,137 @@
+//! Some util functions related to NEAR light client.
+//!
+
+use near_light_client::{
+    near_types::{
+        hash::CryptoHash,
+        signature::{ED25519PublicKey, PublicKey, Signature},
+        BlockHeaderInnerLite, EpochId, LightClientBlock, LightClientBlockLite, ValidatorStakeView,
+        ValidatorStakeViewV1,
+    },
+    types::{ConsensusState, Header},
+};
+use near_primitives::views::BlockView;
+
+/// Print info message with current time formatted.
+#[macro_export]
+macro_rules! info_with_time {
+    ($fmt:expr, $($arg:tt)+) => {
+        tracing::trace!(
+            "{}\t{}",
+            chrono::Local::now().naive_local().format("%m-%d %H:%M:%S").to_string(),
+            format!($fmt, $($arg)+)
+        );
+    };
+}
+
+/// Produce `BlockHeaderInnerLiteView` by its NEAR version
+pub fn produce_block_header_inner_light(
+    view: &near_primitives::views::BlockHeaderInnerLiteView,
+) -> BlockHeaderInnerLite {
+    BlockHeaderInnerLite {
+        height: view.height,
+        epoch_id: EpochId(CryptoHash(view.epoch_id.0)),
+        next_epoch_id: EpochId(CryptoHash(view.next_epoch_id.0)),
+        prev_state_root: CryptoHash(view.prev_state_root.0),
+        outcome_root: CryptoHash(view.outcome_root.0),
+        timestamp: view.timestamp_nanosec,
+        next_bp_hash: CryptoHash(view.next_bp_hash.0),
+        block_merkle_root: CryptoHash(view.block_merkle_root.0),
+    }
+}
+
+/// Produce `Header` by NEAR version of `LightClientBlockView` and `BlockView`.
+pub fn produce_light_client_block(
+    view: &near_primitives::views::LightClientBlockView,
+    block_view: &BlockView,
+) -> Header {
+    assert!(
+        view.inner_lite.height == block_view.header.height,
+        "Not same height of light client block view and block view."
+    );
+    Header {
+        light_client_block: LightClientBlock {
+            prev_block_hash: CryptoHash(view.prev_block_hash.0),
+            next_block_inner_hash: CryptoHash(view.next_block_inner_hash.0),
+            inner_lite: produce_block_header_inner_light(&view.inner_lite),
+            inner_rest_hash: CryptoHash(view.inner_rest_hash.0),
+            next_bps: Some(
+                view.next_bps
+                    .as_ref()
+                    .unwrap()
+                    .iter()
+                    .map(|f| match f {
+                        near_primitives::views::validator_stake_view::ValidatorStakeView::V1(v) => {
+                            ValidatorStakeView::V1(ValidatorStakeViewV1 {
+                                account_id: v.account_id.to_string(),
+                                public_key: match &v.public_key {
+                                    near_crypto::PublicKey::ED25519(data) => {
+                                        PublicKey::ED25519(ED25519PublicKey(data.clone().0))
+                                    }
+                                    _ => panic!("Unsupported publickey in next block producers."),
+                                },
+                                stake: v.stake,
+                            })
+                        }
+                    })
+                    .collect(),
+            ),
+            approvals_after_next: view
+                .approvals_after_next
+                .iter()
+                .map(|f| {
+                    f.as_ref().map(|s| match s {
+                        near_crypto::Signature::ED25519(data) => Signature::ED25519(data.clone()),
+                        _ => panic!("Unsupported signature in approvals after next."),
+                    })
+                })
+                .collect(),
+        },
+        prev_state_root_of_chunks: block_view
+            .chunks
+            .iter()
+            .map(|header| CryptoHash(header.prev_state_root.0))
+            .collect(),
+    }
+}
+
+/// Producer `LightClientBlockLiteView` by its NEAR version
+pub fn produce_light_client_block_lite_view(
+    view: &near_primitives::views::LightClientBlockLiteView,
+) -> LightClientBlockLite {
+    LightClientBlockLite {
+        inner_lite: produce_block_header_inner_light(&view.inner_lite),
+        inner_rest_hash: CryptoHash(view.inner_rest_hash.0),
+        prev_block_hash: CryptoHash(view.prev_block_hash.0),
+    }
+}
+
+/// Print general info of `LightClientBlockView` with macro `status_info`.
+pub fn print_light_client_consensus_state(view: &ConsensusState) {
+    tracing::trace!(
+        "ConsensusState: {{ prev_block_hash: {}, height: {}, prev_state_root: {}, epoch_id: {}, next_epoch_id: {}, signature_count: {}, current_bps_count: {}, next_bps_count: {} }}",
+        view.header.light_client_block.prev_block_hash,
+        view.header.height(),
+        view.header.light_client_block.inner_lite.prev_state_root,
+        view.header.epoch_id(),
+        view.header.next_epoch_id(),
+        view.header.light_client_block.approvals_after_next.len(),
+        view.current_bps.as_ref().map_or(0, |bps| bps.len()),
+        view.header.light_client_block.next_bps.as_ref().map_or(0, |bps| bps.len()),
+    );
+}
+
+/// Print general info of `BlockView` with macro `status_info`.
+pub fn print_block_view(view: &BlockView) {
+    tracing::trace!(
+        "BlockView: {{ height: {}, prev_height: {:?}, prev_state_root: {}, epoch_id: {}, next_epoch_id: {}, hash: {}, prev_hash: {}, prev_state_root_of_chunks: {:?} }}",
+        view.header.height,
+        view.header.prev_height,
+        view.header.prev_state_root,
+        view.header.epoch_id,
+        view.header.next_epoch_id,
+        view.header.hash,
+        view.header.prev_hash,
+        view.chunks.iter().map(|h| h.prev_state_root).collect::<Vec<near_primitives::hash::CryptoHash>>(),
+    );
+}

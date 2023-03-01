@@ -1,44 +1,70 @@
-use hdpath::StandardHDPath;
+use super::client::ClientSettings;
+use crate::{
+    account::Balance,
+    chain::endpoint::ChainEndpoint,
+    chain::endpoint::ChainStatus,
+    chain::endpoint::HealthCheck,
+    chain::handle::Subscription,
+    chain::near::contract::NearIbcContract,
+    chain::near::rpc::client::NearRpcClient,
+    chain::near::rpc::rpc_provider::{NearEnv, RpcProvider},
+    chain::near::rpc::tool::convert_ibc_event_to_hermes_ibc_event,
+    chain::requests::QueryChannelRequest,
+    chain::requests::QueryChannelsRequest,
+    chain::requests::QueryClientConnectionsRequest,
+    chain::requests::QueryClientStatesRequest,
+    chain::requests::QueryConnectionChannelsRequest,
+    chain::requests::QueryConnectionRequest,
+    chain::requests::QueryConnectionsRequest,
+    chain::requests::QueryConsensusStateRequest,
+    chain::requests::QueryConsensusStatesRequest,
+    chain::requests::QueryNextSequenceReceiveRequest,
+    chain::requests::QueryPacketAcknowledgementsRequest,
+    chain::requests::QueryPacketCommitmentsRequest,
+    chain::requests::QueryPacketEventDataRequest,
+    chain::requests::QueryTxRequest,
+    chain::requests::QueryUnreceivedAcksRequest,
+    chain::requests::QueryUnreceivedPacketsRequest,
+    chain::requests::{
+        CrossChainQueryRequest, QueryChannelClientStateRequest, QueryConsensusStateHeightsRequest,
+    },
+    chain::requests::{
+        IncludeProof, QueryClientStateRequest, QueryHeight, QueryHostConsensusStateRequest,
+        QueryPacketAcknowledgementRequest, QueryPacketCommitmentRequest, QueryPacketReceiptRequest,
+        QueryUpgradedClientStateRequest, QueryUpgradedConsensusStateRequest,
+    },
+    chain::tracking::{TrackedMsgs, TrackingId},
+    client_state::{AnyClientState, IdentifiedAnyClientState},
+    config::AddressType,
+    config::ChainConfig,
+    consensus_state::{AnyConsensusState, AnyConsensusStateWithHeight},
+    denom::DenomTrace,
+    error::Error,
+    event::monitor::EventBatch,
+    event::IbcEventWithHeight,
+    keyring::{KeyRing, Secp256k1KeyPair, SigningKeyPair, Test},
+    misbehaviour::MisbehaviourEvidence,
+};
 use alloc::sync::Arc;
-use core::{
-    future::Future,
-    str::FromStr,
-    fmt::Debug
-};
-use std::{
-    path::Path,
-    thread,
-    time::{Duration, SystemTime}
-};
 use anyhow::Result;
 use bitcoin::util::bip32::ExtendedPubKey;
-use ibc_proto::{
-    google::protobuf::Any,
-    ibc::core::channel::v1::PacketState,
-    protobuf::Protobuf
-};
-use near_account_id::AccountId;
-use near_crypto::{InMemorySigner, KeyType};
-use near_jsonrpc_client::JsonRpcClient;
-use near_primitives::{
-    types::{BlockId, Gas},
-    views::FinalExecutionOutcomeView
-};
-use semver::Version;
-use serde::{Deserialize, Serialize};
-use serde_json::json;
-use sp_core::{H256, hexdisplay::HexDisplay, Pair};
-use sp_core::sr25519;
-use tendermint::time::Time;
-use tendermint_rpc::endpoint::broadcast::tx_sync::Response as TxResponse;
-use tokio::runtime::Runtime as TokioRuntime;
-use tracing::{debug, info, trace};
+use core::{fmt::Debug, future::Future, str::FromStr};
+use hdpath::StandardHDPath;
+use ibc_proto::{google::protobuf::Any, ibc::core::channel::v1::PacketState, protobuf::Protobuf};
 use ibc_relayer_types::{
     applications::ics31_icq::response::CrossChainQueryResponse,
     clients::{
         ics06_solomachine::ClientState as SmClientState,
         ics06_solomachine::ConsensusState as SmConsensusState,
-        ics06_solomachine::{PublicKey, Header as SmHeader, SignBytes, HeaderData as SmHeaderData}
+        ics06_solomachine::{Header as SmHeader, HeaderData as SmHeaderData, PublicKey, SignBytes},
+    },
+    core::ics02_client::client_state::ClientState,
+    core::ics02_client::events::UpdateClient,
+    core::ics23_commitment::commitment::CommitmentRoot,
+    core::ics23_commitment::merkle::MerkleProof,
+    core::ics24_host::path::{
+        AcksPath, ChannelEndsPath, ClientConsensusStatePath, ClientStatePath, CommitmentsPath,
+        ConnectionsPath, ReceiptsPath, SeqRecvsPath,
     },
     core::{
         ics02_client::client_type::ClientType,
@@ -50,68 +76,36 @@ use ibc_relayer_types::{
         ics23_commitment::commitment::CommitmentPrefix,
         ics24_host::identifier::{ChainId, ChannelId, ClientId, ConnectionId, PortId},
     },
-    core::ics02_client::client_state::ClientState,
-    core::ics02_client::events::UpdateClient,
-    core::ics23_commitment::commitment::CommitmentRoot,
-    core::ics23_commitment::merkle::MerkleProof,
-    core::ics24_host::path::{
-        AcksPath, ChannelEndsPath, ClientConsensusStatePath, ClientStatePath, CommitmentsPath,
-        ConnectionsPath, ReceiptsPath, SeqRecvsPath,
-    },
     events::IbcEvent,
-    Height,
-    Height as ICSHeight,
     signer::Signer,
+    Height, Height as ICSHeight,
 };
-use crate::{
-    event::monitor::EventBatch,
-    event::IbcEventWithHeight,
-    error::Error,
-    denom::DenomTrace,
-    consensus_state::{AnyConsensusState, AnyConsensusStateWithHeight},
-    config::ChainConfig,
-    client_state::{AnyClientState, IdentifiedAnyClientState},
-    chain::tracking::{TrackedMsgs, TrackingId},
-    chain::requests::QueryUnreceivedPacketsRequest,
-    chain::requests::QueryUnreceivedAcksRequest,
-    chain::requests::QueryTxRequest,
-    chain::requests::QueryPacketEventDataRequest,
-    chain::requests::QueryPacketCommitmentsRequest,
-    chain::requests::QueryPacketAcknowledgementsRequest,
-    chain::requests::QueryNextSequenceReceiveRequest,
-    chain::requests::QueryConsensusStatesRequest,
-    chain::requests::QueryConsensusStateRequest,
-    chain::requests::QueryConnectionsRequest,
-    chain::requests::QueryConnectionRequest,
-    chain::requests::QueryConnectionChannelsRequest,
-    chain::requests::QueryClientStatesRequest,
-    chain::requests::QueryClientConnectionsRequest,
-    chain::requests::QueryChannelsRequest,
-    chain::requests::QueryChannelRequest,
-    chain::requests::{
-        IncludeProof, QueryClientStateRequest, QueryHeight, QueryHostConsensusStateRequest,
-        QueryPacketAcknowledgementRequest, QueryPacketCommitmentRequest, QueryPacketReceiptRequest,
-        QueryUpgradedClientStateRequest, QueryUpgradedConsensusStateRequest,
-    },
-    chain::requests::{CrossChainQueryRequest, QueryChannelClientStateRequest, QueryConsensusStateHeightsRequest},
-    chain::near::rpc::tool::convert_ibc_event_to_hermes_ibc_event,
-    chain::near::rpc::rpc_provider::{NearEnv, RpcProvider},
-    chain::near::rpc::client::NearRpcClient,
-    chain::near::contract::NearIbcContract,
-    chain::handle::Subscription,
-    chain::endpoint::HealthCheck,
-    chain::endpoint::ChainStatus,
-    chain::endpoint::ChainEndpoint,
-    account::Balance,
-    config::AddressType,
-    keyring::{KeyRing, Secp256k1KeyPair, SigningKeyPair, Test},
-    misbehaviour::MisbehaviourEvidence
+use near_account_id::AccountId;
+use near_crypto::{InMemorySigner, KeyType};
+use near_jsonrpc_client::JsonRpcClient;
+use near_primitives::{
+    types::{BlockId, Gas},
+    views::FinalExecutionOutcomeView,
 };
-use super::client::ClientSettings;
+use semver::Version;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+use sp_core::sr25519;
+use sp_core::{hexdisplay::HexDisplay, Pair, H256};
+use std::{
+    path::Path,
+    thread,
+    time::{Duration, SystemTime},
+};
+use tendermint::time::Time;
+use tendermint_rpc::endpoint::broadcast::tx_sync::Response as TxResponse;
+use tokio::runtime::Runtime as TokioRuntime;
+use tracing::{debug, info, trace};
 
-pub mod rpc;
 pub mod constants;
 pub mod contract;
+mod light_client;
+pub mod rpc;
 
 pub const REVISION_NUMBER: u64 = 0;
 
@@ -153,7 +147,7 @@ impl NearChain {
     /// todo near don't have events subscription
     fn subscribe_ibc_events(&self) -> Result<Vec<IbcEvent>> {
         tracing::trace!("in near: [subscribe_ibc_events]");
-        todo!()//Bob
+        todo!() //Bob
     }
 
     /// get packet receipt by port_id, channel_id and sequence
@@ -175,7 +169,7 @@ impl NearChain {
         //     json!({"port_id": port_id, "channel_id": channel_id, "seq": seq}).to_string().into_bytes()
         // )).expect("Failed to get_packet_receipt.").json()
 
-        todo!()  // todo the receipt can't deserialize
+        todo!() // todo the receipt can't deserialize
     }
 
     // fn get_clients(&self) -> Result<Vec<IdentifiedAnyClientState>> {
@@ -195,14 +189,16 @@ impl NearChain {
         let msg = serde_json::to_string(&messages).unwrap();
 
         let mut home_dir = dirs::home_dir().expect("Impossible to get your home dir!");
-        home_dir.push(".near-credentials/testnet/xsb.testnet.json");
+        home_dir.push(".near-credentials/testnet/my-account.testnet.json");
         let signer = InMemorySigner::from_file(home_dir.as_path()).unwrap();
 
         self.block_on(self.client.call(
             &signer,
             &self.near_ibc_contract,
             "deliver".to_string(),
-            json!({"messages": messages}).to_string().into_bytes(), 300000000000000,0
+            json!({ "messages": messages }).to_string().into_bytes(),
+            300000000000000,
+            0,
         ))
     }
 
@@ -215,7 +211,9 @@ impl NearChain {
             &signer,
             &self.near_ibc_contract,
             "deliver".to_string(),
-            json!({"messages": messages}).to_string().into_bytes(), 300000000000000,1
+            json!({ "messages": messages }).to_string().into_bytes(),
+            300000000000000,
+            1,
         ))
     }
 
@@ -238,7 +236,7 @@ impl ChainEndpoint for NearChain {
     type LightBlock = NearLightBlock; // Todo: Import from Near light client //CS
     type Header = SmHeader; // Todo: Import from Near light client //CS
     type ConsensusState = SmConsensusState; // Todo: Import from Near light client //CS
-    type ClientState = SmClientState;  // Todo: Import from Near light client //CS
+    type ClientState = SmClientState; // Todo: Import from Near light client //CS
     type SigningKeyPair = Secp256k1KeyPair;
 
     fn id(&self) -> &ChainId {
@@ -256,14 +254,11 @@ impl ChainEndpoint for NearChain {
         let keybase = KeyRing::new(config.key_store_type, &config.account_prefix, &config.id)
             .map_err(Error::key_base)?;
         Ok(NearChain {
-            client: NearRpcClient::new(
-                RpcProvider::Infura.get_rpc_by_env(&NearEnv::Testnet)
-            ),
+            client: NearRpcClient::new(config.rpc_addr.to_string().as_str()),
             config,
             keybase,
-            // near_ibc_contract: AccountId::from_str("xsb.testnet").unwrap(),
             near_ibc_contract: AccountId::from_str("nearibc.testnet").unwrap(),
-            rt
+            rt,
         })
     }
 
@@ -382,7 +377,7 @@ impl ChainEndpoint for NearChain {
             }
             TrackingId::Static(value) => match value {
                 "ft-transfer" => {
-                   todo!() // wait for near-ibc ics20
+                    todo!() // wait for near-ibc ics20
                 }
                 _ => {
                     let result = self.deliver(proto_msgs.messages().to_vec()).map_err(|e| {
@@ -396,7 +391,9 @@ impl ChainEndpoint for NearChain {
                     result
                 }
             },
-            TrackingId::ClearedUuid(_) => {todo!()}
+            TrackingId::ClearedUuid(_) => {
+                todo!()
+            }
         };
 
         Ok(collect_ibc_event_by_outcome(result))
@@ -453,10 +450,10 @@ impl ChainEndpoint for NearChain {
 
     /// Fetch a header from the chain at the given height and verify it.
     fn verify_header(
-            &mut self,
-            _trusted: ICSHeight,
-            _target: ICSHeight,
-            _client_state: &AnyClientState,
+        &mut self,
+        _trusted: ICSHeight,
+        _target: ICSHeight,
+        _client_state: &AnyClientState,
     ) -> Result<Self::LightBlock, Error> {
         Ok(Self::LightBlock {})
     }
@@ -474,9 +471,9 @@ impl ChainEndpoint for NearChain {
     // Queries
 
     fn query_balance(
-            &self,
-            _key_name: Option<&str>,
-            _denom: Option<&str>,
+        &self,
+        _key_name: Option<&str>,
+        _denom: Option<&str>,
     ) -> std::result::Result<Balance, Error> {
         Ok(Balance {
             amount: String::default(),
@@ -500,7 +497,8 @@ impl ChainEndpoint for NearChain {
 
     fn query_commitment_prefix(&self) -> Result<CommitmentPrefix, Error> {
         tracing::trace!("in near: [get_commitment_prefix]");
-        self.get_commitment_prefix().map_err(|e|Error::report_error("invalid_commitment_prefix".to_string()))
+        self.get_commitment_prefix()
+            .map_err(|e| Error::report_error("invalid_commitment_prefix".to_string()))
 
         // self.block_on(self.client.view(
         //     self.near_ibc_contract.clone(),
@@ -564,10 +562,7 @@ impl ChainEndpoint for NearChain {
         let client_state = AnyClientState::decode_vec(&result).unwrap();
 
         match include_proof {
-            IncludeProof::Yes => Ok((
-                client_state,
-                Some(MerkleProof::default())
-            )),
+            IncludeProof::Yes => Ok((client_state, Some(MerkleProof::default()))),
             IncludeProof::No => Ok((client_state, None)),
         }
     }
@@ -592,9 +587,7 @@ impl ChainEndpoint for NearChain {
         let consensus_state = AnyConsensusState::decode_vec(&result).unwrap();
 
         match include_proof {
-            IncludeProof::Yes => Ok(
-                (consensus_state, Some(MerkleProof::default()))
-            ),
+            IncludeProof::Yes => Ok((consensus_state, Some(MerkleProof::default()))),
             IncludeProof::No => Ok((consensus_state, None)),
         }
     }
@@ -669,7 +662,7 @@ impl ChainEndpoint for NearChain {
         request: QueryClientConnectionsRequest,
     ) -> Result<Vec<ConnectionId>, Error> {
         tracing::trace!("in near: [query_client_connections]");
-        todo!()//Bob
+        todo!() //Bob
     }
 
     fn query_connection(
@@ -689,8 +682,7 @@ impl ChainEndpoint for NearChain {
             .map_err(|_| Error::report_error("query_connection_end".to_string()))?;
 
         // update ConnectionsPath key
-        let connections_path = ConnectionsPath(connection_id.clone())
-            .to_string();
+        let connections_path = ConnectionsPath(connection_id.clone()).to_string();
 
         Ok((connection_end, Some(MerkleProof::default())))
 
@@ -763,8 +755,7 @@ impl ChainEndpoint for NearChain {
             .map_err(|_| Error::report_error("query_channel_end".to_string()))?;
 
         // use channel_end path as key
-        let channel_end_path = ChannelEndsPath(port_id.clone(), channel_id.clone())
-            .to_string();
+        let channel_end_path = ChannelEndsPath(port_id.clone(), channel_id.clone()).to_string();
 
         match include_proof {
             IncludeProof::Yes => {
@@ -778,10 +769,7 @@ impl ChainEndpoint for NearChain {
                     QueryHeight::Specific(value) => value,
                 };
 
-                Ok((
-                    channel_end,
-                    Some(MerkleProof::default())
-                ))
+                Ok((channel_end, Some(MerkleProof::default())))
             }
             IncludeProof::No => Ok((channel_end, None)),
         }
@@ -830,10 +818,7 @@ impl ChainEndpoint for NearChain {
                     }
                     QueryHeight::Specific(value) => value,
                 };
-                Ok((
-                    packet_commit,
-                    Some(MerkleProof::default()),
-                ))
+                Ok((packet_commit, Some(MerkleProof::default())))
             }
             IncludeProof::No => Ok((packet_commit, None)),
         }
@@ -896,7 +881,7 @@ impl ChainEndpoint for NearChain {
                 Ok((
                     packet_receipt,
                     Some(self.generate_storage_proof(
-                            vec![packet_receipt_path.as_bytes()],
+                        vec![packet_receipt_path.as_bytes()],
                         &query_height,
                         "PacketReceipt",
                     )?),
@@ -969,7 +954,7 @@ impl ChainEndpoint for NearChain {
                 Ok((
                     packet_acknowledgement,
                     Some(self.generate_storage_proof(
-                            vec![packet_acknowledgement_path.as_bytes()],
+                        vec![packet_acknowledgement_path.as_bytes()],
                         &query_height,
                         "Acknowledgements",
                     )?),
@@ -1047,8 +1032,8 @@ impl ChainEndpoint for NearChain {
             .get_next_sequence_receive(&port_id, &channel_id)
             .map_err(|_| Error::report_error("query_next_sequence_receive".to_string()))?;
 
-        let next_sequence_receive_path = SeqRecvsPath(port_id.clone(), channel_id.clone())
-        .to_string();
+        let next_sequence_receive_path =
+            SeqRecvsPath(port_id.clone(), channel_id.clone()).to_string();
 
         match include_proof {
             IncludeProof::Yes => {
@@ -1064,7 +1049,7 @@ impl ChainEndpoint for NearChain {
                 Ok((
                     next_sequence_receive,
                     Some(self.generate_storage_proof(
-                            vec![next_sequence_receive_path.as_bytes()],
+                        vec![next_sequence_receive_path.as_bytes()],
                         &query_height,
                         "NextSequenceRecv",
                     )?),
@@ -1129,11 +1114,23 @@ impl ChainEndpoint for NearChain {
         _dst_config: ClientSettings,
     ) -> Result<Self::ClientState, Error> {
         tracing::trace!("in near: [build_client_state]");
-        let pk = PublicKey(tendermint::PublicKey::from_raw_secp256k1(&hex_literal::hex!("02c88aca653727db28e0ade87497c1f03b551143dedfd4db8de71689ad5e38421c")).unwrap());
+        let pk = PublicKey(
+            tendermint::PublicKey::from_raw_secp256k1(&hex_literal::hex!(
+                "02c88aca653727db28e0ade87497c1f03b551143dedfd4db8de71689ad5e38421c"
+            ))
+            .unwrap(),
+        );
         let duration_since_epoch = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap();
         let timestamp_nanos = duration_since_epoch.as_nanos(); // u128
+        let mut tmp_dir = dirs::home_dir().expect("Impossible to get your home dir!");
+        tmp_dir.push(".hermes/tmp/near_state");
+        self.rt.spawn(light_client::actions::start_light_client(
+            self.config.rpc_addr.to_string(),
+            tmp_dir.into_os_string().into_string().unwrap(),
+            1000,
+        ));
         Ok(SmClientState {
             sequence: height.revision_height(),
             frozen_sequence: 0,
@@ -1156,7 +1153,12 @@ impl ChainEndpoint for NearChain {
             "in near: [build_consensus_state] light_block:{:?}",
             light_block
         );
-        let pk = PublicKey(tendermint::PublicKey::from_raw_secp256k1(&hex_literal::hex!("02c88aca653727db28e0ade87497c1f03b551143dedfd4db8de71689ad5e38421c")).unwrap());
+        let pk = PublicKey(
+            tendermint::PublicKey::from_raw_secp256k1(&hex_literal::hex!(
+                "02c88aca653727db28e0ade87497c1f03b551143dedfd4db8de71689ad5e38421c"
+            ))
+            .unwrap(),
+        );
         let duration_since_epoch = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap();
@@ -1179,17 +1181,25 @@ impl ChainEndpoint for NearChain {
     ) -> Result<(Self::Header, Vec<Self::Header>), Error> {
         tracing::trace!("in near [build_header]");
 
-        let pk = PublicKey(tendermint::PublicKey::from_raw_secp256k1(&hex_literal::hex!("02c88aca653727db28e0ade87497c1f03b551143dedfd4db8de71689ad5e38421c")).unwrap());
+        let pk = PublicKey(
+            tendermint::PublicKey::from_raw_secp256k1(&hex_literal::hex!(
+                "02c88aca653727db28e0ade87497c1f03b551143dedfd4db8de71689ad5e38421c"
+            ))
+            .unwrap(),
+        );
         let duration_since_epoch = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap();
-        let timestamp_nanos = duration_since_epoch.checked_sub(Duration::from_secs(5)).unwrap().as_nanos() as u64; // u128
-        let data = SmHeaderData{
+        let timestamp_nanos = duration_since_epoch
+            .checked_sub(Duration::from_secs(5))
+            .unwrap()
+            .as_nanos() as u64; // u128
+        let data = SmHeaderData {
             new_pub_key: Some(pk),
             new_diversifier: "oct".to_string(),
         };
 
-        let bytes = SignBytes{
+        let bytes = SignBytes {
             sequence: client_state.latest_height().revision_height(),
             timestamp: timestamp_nanos,
             diversifier: "oct".to_string(),
@@ -1201,16 +1211,13 @@ impl ChainEndpoint for NearChain {
         let encoded_bytes = bytes.encode_vec().unwrap();
         let standard = StandardHDPath::from_str("m/44'/60'/0'/0/0").unwrap();
 
-
         // m/44'/60'/0'/0/0
         // 0xd73E35f53b8180b241E70C0e9040173dd8D0e2A0
         // 0x02c88aca653727db28e0ade87497c1f03b551143dedfd4db8de71689ad5e38421c
         // 0x281afd44d50ffd0bab6502cbb9bc58a7f9b53813c862db01836d46a27b51168c
 
-
         let key_pair = Secp256k1KeyPair::from_mnemonic("captain walk infant web eye return ahead once face sunny usage devote cotton car old check symbol antique derive wire kid solve forest fish", &standard, &AddressType::Cosmos, "oct").unwrap();
         let signature = key_pair.sign(&encoded_bytes).unwrap();
-
 
         let header = SmHeader {
             sequence: client_state.latest_height().revision_height(),
@@ -1231,21 +1238,26 @@ impl ChainEndpoint for NearChain {
         todo!()
     }
 
-
     fn subscribe(&mut self) -> std::result::Result<Subscription, Error> {
         todo!()
     }
 
-    fn query_consensus_state_heights(&self, request: QueryConsensusStateHeightsRequest) -> std::result::Result<Vec<Height>, Error> {
+    fn query_consensus_state_heights(
+        &self,
+        request: QueryConsensusStateHeightsRequest,
+    ) -> std::result::Result<Vec<Height>, Error> {
         todo!()
     }
 
-    fn cross_chain_query(&self, requests: Vec<CrossChainQueryRequest>) -> std::result::Result<Vec<CrossChainQueryResponse>, Error> {
+    fn cross_chain_query(
+        &self,
+        requests: Vec<CrossChainQueryRequest>,
+    ) -> std::result::Result<Vec<CrossChainQueryResponse>, Error> {
         todo!()
     }
 }
 
-fn collect_ibc_event_by_outcome(outcome: FinalExecutionOutcomeView)-> Vec<IbcEventWithHeight> {
+fn collect_ibc_event_by_outcome(outcome: FinalExecutionOutcomeView) -> Vec<IbcEventWithHeight> {
     let mut ibc_events = vec![];
     for receipt_outcome in outcome.receipts_outcome {
         for log in receipt_outcome.outcome.logs {
@@ -1255,18 +1267,23 @@ fn collect_ibc_event_by_outcome(outcome: FinalExecutionOutcomeView)-> Vec<IbcEve
                 let event = log.replace("EVENT_JSON:", "");
                 let event_value = serde_json::value::Value::from_str(event.as_str()).unwrap();
                 if event_value["standard"].eq("near-ibc") {
-                    let ibc_event: ibc::events::IbcEvent = serde_json::from_value(event_value["raw-ibc-event"].clone()).unwrap();
+                    let ibc_event: ibc::events::IbcEvent =
+                        serde_json::from_value(event_value["raw-ibc-event"].clone()).unwrap();
                     let block_height = u64::from_str(
-                        event_value["block_height"].as_str()
-                        .expect("Failed to get block_height field.")
-                    ).expect("Failed to parse block_height field.");
+                        event_value["block_height"]
+                            .as_str()
+                            .expect("Failed to get block_height field."),
+                    )
+                    .expect("Failed to parse block_height field.");
                     let epoch_height = u64::from_str(
-                        event_value["epoch_height"].as_str()
-                            .expect("Failed to get epoch_height field.")
-                    ).expect("Failed to parse epoch_height field.");
+                        event_value["epoch_height"]
+                            .as_str()
+                            .expect("Failed to get epoch_height field."),
+                    )
+                    .expect("Failed to parse epoch_height field.");
                     ibc_events.push(IbcEventWithHeight {
                         event: convert_ibc_event_to_hermes_ibc_event(ibc_event),
-                        height: Height::new(epoch_height, block_height).unwrap()
+                        height: Height::new(epoch_height, block_height).unwrap(),
                     })
                 }
             }
