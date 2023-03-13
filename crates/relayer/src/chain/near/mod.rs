@@ -227,6 +227,20 @@ impl NearChain {
     ) -> Result<MerkleProof, Error> {
         Ok(MerkleProof::default())
     }
+
+    fn get_solomachine_pubkey(&self) -> PublicKey {
+        PublicKey(
+            tendermint::PublicKey::from_raw_secp256k1(
+                &self
+                    .keybase
+                    .get_key(&self.config.key_name)
+                    .unwrap()
+                    .public_key
+                    .serialize_uncompressed(),
+            )
+            .unwrap(),
+        )
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1114,31 +1128,18 @@ impl ChainEndpoint for NearChain {
         _dst_config: ClientSettings,
     ) -> Result<Self::ClientState, Error> {
         tracing::trace!("in near: [build_client_state]");
-        let pk = PublicKey(
-            tendermint::PublicKey::from_raw_secp256k1(&hex_literal::hex!(
-                "02c88aca653727db28e0ade87497c1f03b551143dedfd4db8de71689ad5e38421c"
-            ))
-            .unwrap(),
-        );
+        let pk = self.get_solomachine_pubkey();
         let duration_since_epoch = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap();
         let timestamp_nanos = duration_since_epoch.as_nanos(); // u128
-        let mut tmp_dir = dirs::home_dir().expect("Impossible to get your home dir!");
-        tmp_dir.push(".hermes/tmp/near_state");
-        self.rt.spawn(light_client::actions::start_light_client(
-            self.config.rpc_addr.to_string(),
-            tmp_dir.into_os_string().into_string().unwrap(),
-            1000,
-        ));
         Ok(SmClientState {
             sequence: height.revision_height(),
             frozen_sequence: 0,
             consensus_state: SmConsensusState {
                 public_key: pk,
                 diversifier: "oct".to_string(),
-                // timestamp: timestamp_nanos as u64,
-                timestamp: 9999,
+                timestamp: timestamp_nanos as u64,
                 root: CommitmentRoot::from_bytes(&pk.to_bytes()),
             },
             allow_update_after_proposal: false,
