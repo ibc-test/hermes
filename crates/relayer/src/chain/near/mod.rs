@@ -1154,12 +1154,7 @@ impl ChainEndpoint for NearChain {
             "in near: [build_consensus_state] light_block:{:?}",
             light_block
         );
-        let pk = PublicKey(
-            tendermint::PublicKey::from_raw_secp256k1(&hex_literal::hex!(
-                "02c88aca653727db28e0ade87497c1f03b551143dedfd4db8de71689ad5e38421c"
-            ))
-            .unwrap(),
-        );
+        let pk = self.get_solomachine_pubkey();
         let duration_since_epoch = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap();
@@ -1168,8 +1163,7 @@ impl ChainEndpoint for NearChain {
         Ok(SmConsensusState {
             public_key: pk,
             diversifier: "oct".to_string(),
-            // timestamp: timestamp_nanos as u64,
-            timestamp: 9999,
+            timestamp: timestamp_nanos as u64,
             root: CommitmentRoot::from_bytes(&pk.to_bytes()),
         })
     }

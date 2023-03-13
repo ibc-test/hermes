@@ -34,10 +34,10 @@ use core::fmt::{Display, Error as FmtError, Formatter};
 
 
 
-pub const SOLOMACHINE_CLIENT_STATE_TYPE_URL: &str = "/ibc.lightclients.solomachine.v1.ClientState";
+pub const SOLOMACHINE_CLIENT_STATE_TYPE_URL: &str = "/ibc.lightclients.solomachine.v2.ClientState";
 pub const SOLOMACHINE_CONSENSUS_STATE_TYPE_URL: &str =
-    "/ibc.lightclients.solomachine.v1.ConsensusState";
-pub const SOLOMACHINE_HEADER_TYPE_URL: &str = "/ibc.lightclients.solomachine.v1.Header";
+    "/ibc.lightclients.solomachine.v2.ConsensusState";
+pub const SOLOMACHINE_HEADER_TYPE_URL: &str = "/ibc.lightclients.solomachine.v2.Header";
 
 
 
