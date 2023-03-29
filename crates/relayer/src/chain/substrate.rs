@@ -68,13 +68,6 @@ use subxt::{
 };
 use subxt::{tx::PairSigner, OnlineClient, SubstrateConfig};
 use tracing::info;
-use ibc_relayer_types::clients::ics06_solomachine::{Header as SmHeader, SignBytes, HeaderData};
-use ibc_relayer_types::clients::ics06_solomachine::HeaderData as SmHeaderData;
-use hdpath::StandardHDPath;
-use crate::config::AddressType;
-
-
-
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SubLightBlock {}
@@ -1016,7 +1009,7 @@ impl ChainEndpoint for SubstrateChain {
                             match value.header.type_url.as_str() {
                                 ibc_relayer_types::clients::ics06_solomachine::SOLOMACHINE_HEADER_TYPE_URL => {
                                     let v = ibc_relayer_types::clients::ics06_solomachine::header::Header::try_from(value.header.clone()).unwrap();
-                                    println!("ics06 header : {}", v);
+                                    println!("ics06 header : {:?}", v);
                                 }
                                 ibc_relayer_types::clients::ics07_tendermint::header::TENDERMINT_HEADER_TYPE_URL => {
                                     let v = ibc_relayer_types::clients::ics07_tendermint::header::Header::try_from(value.header.clone()).unwrap();

@@ -5,32 +5,28 @@ use ibc_proto::ibc::lightclients::tendermint::v1::ClientState as RawClientState;
 #[cfg(test)]
 use ibc_proto::ibc::mock::ClientState as RawMockClientState;
 use ibc_proto::protobuf::Protobuf;
+use ibc_relayer_types::clients::ics12_near::client_state::NEAR_CLIENT_STATE_TYPE_URL;
 use serde::{Deserialize, Serialize};
 
 use ibc_proto::google::protobuf::Any;
-use ibc_relayer_types::{
-    core::ics02_client::client_state::{
-        downcast_client_state, ClientState, UpgradeOptions,
-    },
-    core::ics02_client::client_type::ClientType,
-    core::ics02_client::error::Error,
-    core::ics02_client::trust_threshold::TrustThreshold,
-    core::ics24_host::error::ValidationError,
-    core::ics24_host::identifier::{ChainId, ClientId},
-    mock::client_state::MockClientState,
-    mock::client_state::MOCK_CLIENT_STATE_TYPE_URL,
-    Height,
-    clients::{
-        ics12_near::client_state::NEAR_CLIENT_STATE_TYPE_URL,
-        ics07_tendermint::client_state::{
-            ClientState as TmClientState, UpgradeOptions as TmUpgradeOptions,
-            TENDERMINT_CLIENT_STATE_TYPE_URL,
-        },
-        ics12_near::client_state::ClientState as NearClientState,
-        ics06_solomachine::{ClientState as SmClientState, SOLOMACHINE_CLIENT_STATE_TYPE_URL}
-    }
+use ibc_relayer_types::clients::ics07_tendermint::client_state::{
+    ClientState as TmClientState, UpgradeOptions as TmUpgradeOptions,
+    TENDERMINT_CLIENT_STATE_TYPE_URL,
 };
+use ibc_relayer_types::core::ics02_client::client_state::{
+    downcast_client_state, ClientState, UpgradeOptions,
+};
+use ibc_relayer_types::core::ics02_client::client_type::ClientType;
+use ibc_relayer_types::core::ics02_client::error::Error;
+use ibc_relayer_types::core::ics02_client::trust_threshold::TrustThreshold;
 
+use ibc_relayer_types::core::ics24_host::error::ValidationError;
+use ibc_relayer_types::core::ics24_host::identifier::{ChainId, ClientId};
+#[cfg(test)]
+use ibc_relayer_types::mock::client_state::MockClientState;
+#[cfg(test)]
+use ibc_relayer_types::mock::client_state::MOCK_CLIENT_STATE_TYPE_URL;
+use ibc_relayer_types::Height;
 
 use ibc_proto::ibc::lightclients::solomachine::v2::ClientState as SmRawClientState;
 use ibc_relayer_types::clients::ics06_solomachine::client_state::ClientState as SmClientState;
@@ -62,7 +58,7 @@ impl UpgradeOptions for AnyUpgradeOptions {}
 pub enum AnyClientState {
     Tendermint(TmClientState),
     Solomachine(SmClientState),
-    Near(NearClientState),
+    Near(SmClientState),
 
     #[cfg(test)]
     Mock(MockClientState),
@@ -128,7 +124,7 @@ impl AnyClientState {
         match self {
             AnyClientState::Tendermint(tm_state) => tm_state.refresh_time(),
             AnyClientState::Solomachine(tm_state) => None,
-            AnyClientState::Near(near_state) => near_state.refresh_time(),
+            AnyClientState::Near(near_state) => None,
 
             #[cfg(test)]
             AnyClientState::Mock(mock_state) => mock_state.refresh_time(),
@@ -180,7 +176,8 @@ impl From<AnyClientState> for Any {
             },
             AnyClientState::Near(value) => Any {
                 type_url: NEAR_CLIENT_STATE_TYPE_URL.to_string(),
-                value: vec![]
+                value: Protobuf::<SmRawClientState>::encode_vec(&value)
+                .expect("encoding to `Any` from `AnyClientState::Solomachine`"),
             },
             #[cfg(test)]
             AnyClientState::Mock(value) => Any {
@@ -266,12 +263,6 @@ impl From<TmClientState> for AnyClientState {
 impl From<SmClientState> for AnyClientState {
     fn from(cs: SmClientState) -> Self {
         Self::Solomachine(cs)
-    }
-}
-
-impl From<NearClientState> for AnyClientState {
-    fn from(cs: NearClientState) -> Self {
-        Self::Near(cs)
     }
 }
 

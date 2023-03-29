@@ -50,13 +50,17 @@ use anyhow::Result;
 use bitcoin::util::bip32::ExtendedPubKey;
 use core::{fmt::Debug, future::Future, str::FromStr};
 use hdpath::StandardHDPath;
-use ibc_proto::{google::protobuf::Any, ibc::core::channel::v1::PacketState, protobuf::Protobuf};
+use ibc_proto::{
+    google::protobuf::Any,
+    ibc::{core::channel::v1::PacketState, lightclients::solomachine::v2::SignBytes},
+    protobuf::Protobuf,
+};
 use ibc_relayer_types::{
     applications::ics31_icq::response::CrossChainQueryResponse,
     clients::{
-        ics06_solomachine::ClientState as SmClientState,
-        ics06_solomachine::ConsensusState as SmConsensusState,
-        ics06_solomachine::{Header as SmHeader, HeaderData as SmHeaderData, PublicKey, SignBytes},
+        ics06_solomachine::client_state::ClientState as SmClientState,
+        ics06_solomachine::consensus_state::{ConsensusState as SmConsensusState, PublicKey},
+        ics06_solomachine::header::{Header as SmHeader, HeaderData as SmHeaderData},
     },
     core::ics02_client::client_state::ClientState,
     core::ics02_client::events::UpdateClient,
@@ -87,6 +91,7 @@ use near_primitives::{
     types::{BlockId, Gas},
     views::FinalExecutionOutcomeView,
 };
+use prost::Message;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -1119,7 +1124,13 @@ impl ChainEndpoint for NearChain {
     ) -> Result<Self::ConsensusState, Error> {
         tracing::trace!("in near: [query_host_consensus_state]");
 
-        Ok(Self::ConsensusState::default())
+        let pk = self.get_solomachine_pubkey();
+        Ok(SmConsensusState {
+            public_key: pk,
+            diversifier: "oct".to_string(),
+            timestamp: 9999,
+            root: CommitmentRoot::from_bytes(&pk.to_bytes()),
+        })
     }
 
     fn build_client_state(
@@ -1135,11 +1146,12 @@ impl ChainEndpoint for NearChain {
         let timestamp_nanos = duration_since_epoch.as_nanos(); // u128
         Ok(SmClientState {
             sequence: height.revision_height(),
-            frozen_sequence: 0,
+            is_frozen: false,
             consensus_state: SmConsensusState {
                 public_key: pk,
                 diversifier: "oct".to_string(),
-                timestamp: timestamp_nanos as u64,
+                timestamp: 9999,
+                // timestamp: timestamp_nanos as u64,
                 root: CommitmentRoot::from_bytes(&pk.to_bytes()),
             },
             allow_update_after_proposal: false,
@@ -1163,7 +1175,8 @@ impl ChainEndpoint for NearChain {
         Ok(SmConsensusState {
             public_key: pk,
             diversifier: "oct".to_string(),
-            timestamp: timestamp_nanos as u64,
+            timestamp: 9999,
+            // timestamp: timestamp_nanos as u64,
             root: CommitmentRoot::from_bytes(&pk.to_bytes()),
         })
     }
@@ -1203,7 +1216,9 @@ impl ChainEndpoint for NearChain {
             data: data.encode_vec().unwrap(),
         };
 
-        let encoded_bytes = bytes.encode_vec().unwrap();
+        let mut buf = Vec::new();
+        Message::encode(&bytes, &mut buf).unwrap();
+        println!("encoded_bytes: {:?}", buf);
         let standard = StandardHDPath::from_str("m/44'/60'/0'/0/0").unwrap();
 
         // m/44'/60'/0'/0/0
@@ -1212,7 +1227,7 @@ impl ChainEndpoint for NearChain {
         // 0x281afd44d50ffd0bab6502cbb9bc58a7f9b53813c862db01836d46a27b51168c
 
         let key_pair = Secp256k1KeyPair::from_mnemonic("captain walk infant web eye return ahead once face sunny usage devote cotton car old check symbol antique derive wire kid solve forest fish", &standard, &AddressType::Cosmos, "oct").unwrap();
-        let signature = key_pair.sign(&encoded_bytes).unwrap();
+        let signature = key_pair.sign(&buf).unwrap();
 
         let header = SmHeader {
             sequence: client_state.latest_height().revision_height(),
