@@ -5,7 +5,6 @@ use ibc_proto::ibc::lightclients::tendermint::v1::ClientState as RawClientState;
 #[cfg(test)]
 use ibc_proto::ibc::mock::ClientState as RawMockClientState;
 use ibc_proto::protobuf::Protobuf;
-use ibc_relayer_types::clients::ics12_near::client_state::NEAR_CLIENT_STATE_TYPE_URL;
 use serde::{Deserialize, Serialize};
 
 use ibc_proto::google::protobuf::Any;
@@ -58,7 +57,6 @@ impl UpgradeOptions for AnyUpgradeOptions {}
 pub enum AnyClientState {
     Tendermint(TmClientState),
     Solomachine(SmClientState),
-    Near(SmClientState),
 
     #[cfg(test)]
     Mock(MockClientState),
@@ -69,7 +67,6 @@ impl AnyClientState {
         match self {
             Self::Tendermint(tm_state) => tm_state.latest_height(),
             Self::Solomachine(sm_state) => sm_state.latest_height(),
-            Self::Near(near_state) => near_state.latest_height(),
 
             #[cfg(test)]
             Self::Mock(mock_state) => mock_state.latest_height(),
@@ -80,7 +77,6 @@ impl AnyClientState {
         match self {
             Self::Tendermint(tm_state) => tm_state.frozen_height(),
             Self::Solomachine(sm_state) => sm_state.frozen_height(),
-            Self::Near(near_state) => near_state.frozen_height(),
 
             #[cfg(test)]
             Self::Mock(mock_state) => mock_state.frozen_height(),
@@ -91,7 +87,6 @@ impl AnyClientState {
         match self {
             AnyClientState::Tendermint(state) => Some(state.trust_threshold),
             AnyClientState::Solomachine(state) => None,
-            AnyClientState::Near(_)=>None,
 
             #[cfg(test)]
             AnyClientState::Mock(_) => None,
@@ -102,7 +97,6 @@ impl AnyClientState {
         match self {
             AnyClientState::Tendermint(state) => state.max_clock_drift,
             AnyClientState::Solomachine(state) => Duration::new(0, 0),
-            AnyClientState::Near(_) => Duration::new(0, 0),
 
             #[cfg(test)]
             AnyClientState::Mock(_) => Duration::new(0, 0),
@@ -113,7 +107,6 @@ impl AnyClientState {
         match self {
             Self::Tendermint(state) => state.client_type(),
             Self::Solomachine(state) => state.client_type(),
-            Self::Near(state) => state.client_type(),
 
             #[cfg(test)]
             Self::Mock(state) => state.client_type(),
@@ -124,7 +117,6 @@ impl AnyClientState {
         match self {
             AnyClientState::Tendermint(tm_state) => tm_state.refresh_time(),
             AnyClientState::Solomachine(tm_state) => None,
-            AnyClientState::Near(near_state) => None,
 
             #[cfg(test)]
             AnyClientState::Mock(mock_state) => mock_state.refresh_time(),
@@ -174,11 +166,6 @@ impl From<AnyClientState> for Any {
                 value: Protobuf::<SmRawClientState>::encode_vec(&value)
                     .expect("encoding to `Any` from `AnyClientState::Solomachine`"),
             },
-            AnyClientState::Near(value) => Any {
-                type_url: NEAR_CLIENT_STATE_TYPE_URL.to_string(),
-                value: Protobuf::<SmRawClientState>::encode_vec(&value)
-                .expect("encoding to `Any` from `AnyClientState::Solomachine`"),
-            },
             #[cfg(test)]
             AnyClientState::Mock(value) => Any {
                 type_url: MOCK_CLIENT_STATE_TYPE_URL.to_string(),
@@ -194,7 +181,6 @@ impl ClientState for AnyClientState {
         match self {
             AnyClientState::Tendermint(tm_state) => tm_state.chain_id(),
             AnyClientState::Solomachine(sm_state) => sm_state.chain_id(),
-            AnyClientState::Near(near_state) => near_state.chain_id(),
 
             #[cfg(test)]
             AnyClientState::Mock(mock_state) => mock_state.chain_id(),
@@ -230,11 +216,6 @@ impl ClientState for AnyClientState {
                 chain_id,
             ),
             AnyClientState::Solomachine(sm_state) => (),
-            AnyClientState::Near(near_state) => near_state.upgrade(
-                upgrade_height,
-                upgrade_options.as_tm_upgrade_options().unwrap(),
-                chain_id,
-            ),
             #[cfg(test)]
             AnyClientState::Mock(mock_state) => {
                 mock_state.upgrade(upgrade_height, upgrade_options, chain_id)
@@ -246,7 +227,6 @@ impl ClientState for AnyClientState {
         match self {
             AnyClientState::Tendermint(tm_state) => tm_state.expired(elapsed_since_latest),
             AnyClientState::Solomachine(sm_state) => false,
-            AnyClientState::Near(near_state) => near_state.expired(elapsed_since_latest),
 
             #[cfg(test)]
             AnyClientState::Mock(mock_state) => mock_state.expired(elapsed_since_latest),

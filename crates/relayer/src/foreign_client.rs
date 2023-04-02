@@ -575,6 +575,11 @@ impl<DstChain: ChainHandle, SrcChain: ChainHandle> ForeignClient<DstChain, SrcCh
                 e,
             )
         })?;
+        info!(
+            "Latest height on {} chain: {}",
+            self.src_chain.id(),
+            latest_height
+        );
 
         // Calculate client state settings from the chain configurations and
         // optional user overrides.
@@ -873,6 +878,10 @@ impl<DstChain: ChainHandle, SrcChain: ChainHandle> ForeignClient<DstChain, SrcCh
         client_state: &AnyClientState,
     ) -> Result<Height, ForeignClientError> {
         let client_latest_height = client_state.latest_height();
+        info!(
+            "foreign_client.solve_trusted_height - target_height: {}, client_latest_height: {}",
+            target_height, client_latest_height
+        );
 
         if client_latest_height < target_height {
             // If the latest height of the client is already lower than the
@@ -1079,6 +1088,10 @@ impl<DstChain: ChainHandle, SrcChain: ChainHandle> ForeignClient<DstChain, SrcCh
         target_height: Height,
         maybe_trusted_height: Option<Height>,
     ) -> Result<Vec<Any>, ForeignClientError> {
+        info!(
+            "foreign_client.build_update_client_with_trusted - target_height: {}, maybe_trusted_height: {:?}",
+            target_height, maybe_trusted_height
+        );
         // Get the latest client state on destination.
         let (client_state, _) = self.validated_client_state()?;
 

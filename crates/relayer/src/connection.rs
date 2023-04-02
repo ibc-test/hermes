@@ -573,6 +573,11 @@ impl<ChainA: ChainHandle, ChainB: ChainHandle> Connection<ChainA, ChainB> {
         match (a_state, b_state) {
             // send the Init message to chain a (source)
             (State::Uninitialized, State::Uninitialized) => {
+                info!(
+                    "sending ConnOpenInit on {} to {}",
+                    self.a_chain().id(),
+                    self.b_chain().id()
+                );
                 let event = self.flipped().build_conn_init_and_send().map_err(|e| {
                     error!("failed ConnOpenInit {}: {}", self.a_side, e);
                     e
@@ -583,6 +588,11 @@ impl<ChainA: ChainHandle, ChainB: ChainHandle> Connection<ChainA, ChainB> {
 
             // send the Try message to chain a (source)
             (State::Uninitialized, State::Init) | (State::Init, State::Init) => {
+                info!(
+                    "sending ConnOpenTry on {} to {}",
+                    self.a_chain().id(),
+                    self.b_chain().id()
+                );
                 let event = self.flipped().build_conn_try_and_send().map_err(|e| {
                     error!("failed ConnOpenTry {}: {}", self.a_side, e);
                     e
@@ -594,6 +604,11 @@ impl<ChainA: ChainHandle, ChainB: ChainHandle> Connection<ChainA, ChainB> {
 
             // send the Try message to chain b (destination)
             (State::Init, State::Uninitialized) => {
+                info!(
+                    "sending ConnOpenTry on {} to {}",
+                    self.b_chain().id(),
+                    self.a_chain().id()
+                );
                 let event = self.build_conn_try_and_send().map_err(|e| {
                     error!("failed ConnOpenTry {}: {}", self.b_side, e);
                     e
@@ -605,6 +620,11 @@ impl<ChainA: ChainHandle, ChainB: ChainHandle> Connection<ChainA, ChainB> {
 
             // send the Ack message to chain a (source)
             (State::Init, State::TryOpen) | (State::TryOpen, State::TryOpen) => {
+                info!(
+                    "sending ConnOpenAck on {} to {}",
+                    self.a_chain().id(),
+                    self.b_chain().id()
+                );
                 self.flipped().build_conn_ack_and_send().map_err(|e| {
                     error!("failed ConnOpenAck {}: {}", self.a_side, e);
                     e
@@ -613,6 +633,11 @@ impl<ChainA: ChainHandle, ChainB: ChainHandle> Connection<ChainA, ChainB> {
 
             // send the Ack message to chain b (destination)
             (State::TryOpen, State::Init) => {
+                info!(
+                    "sending ConnOpenAck on {} to {}",
+                    self.b_chain().id(),
+                    self.a_chain().id()
+                );
                 self.build_conn_ack_and_send().map_err(|e| {
                     error!("failed ConnOpenAck {}: {}", self.b_side, e);
                     e
@@ -621,6 +646,11 @@ impl<ChainA: ChainHandle, ChainB: ChainHandle> Connection<ChainA, ChainB> {
 
             // send the Confirm message to chain b (destination)
             (State::Open, State::TryOpen) => {
+                info!(
+                    "sending ConnOpenConfirm on {} to {}",
+                    self.b_chain().id(),
+                    self.a_chain().id()
+                );
                 self.build_conn_confirm_and_send().map_err(|e| {
                     error!("failed ConnOpenConfirm {}: {}", self.b_side, e);
                     e
@@ -629,6 +659,11 @@ impl<ChainA: ChainHandle, ChainB: ChainHandle> Connection<ChainA, ChainB> {
 
             // send the Confirm message to chain a (source)
             (State::TryOpen, State::Open) => {
+                info!(
+                    "sending ConnOpenConfirm on {} to {}",
+                    self.a_chain().id(),
+                    self.b_chain().id()
+                );
                 self.flipped().build_conn_confirm_and_send().map_err(|e| {
                     error!("failed ConnOpenConfirm {}: {}", self.a_side, e);
                     e
