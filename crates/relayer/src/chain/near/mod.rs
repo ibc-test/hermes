@@ -1481,7 +1481,7 @@ impl ChainEndpoint for NearChain {
                 // let timestamp_nanos = duration_since_epoch.as_nanos() as u64; // u128
 
                 let sig_data = self.sign_bytes_with_solomachine_pubkey(
-                    height.revision_height() + 1,
+                    height.revision_height() + 2,
                     timestamp_nanos,
                     DataType::ClientState.into(),
                     buf.to_vec(),
@@ -1515,7 +1515,7 @@ impl ChainEndpoint for NearChain {
                 let mut buf = Vec::new();
                 let data = ConsensusStateData {
                     path: format!(
-                        "/{}/clients%2F{}consensusStates%2F0-{}",
+                        "/{}/clients%2F{}%2FconsensusStates%2F0-{}",
                         String::from_utf8(commitment_prefix.clone().into_vec()).unwrap(),
                         client_id.as_str(),
                         client_state_value
@@ -1535,7 +1535,7 @@ impl ChainEndpoint for NearChain {
                 // let timestamp_nanos = duration_since_epoch.as_nanos() as u64; // u128
 
                 let sig_data = self.sign_bytes_with_solomachine_pubkey(
-                    height.revision_height() + 1,
+                    height.revision_height() + 3,
                     timestamp_nanos,
                     DataType::ConsensusState.into(),
                     buf.to_vec(),
