@@ -1,4 +1,5 @@
 use crate::chain::near::rpc::client::NearRpcClient;
+use crate::chain::near::CONTRACT_ACCOUNT_ID;
 use crate::chain::requests::QueryChannelsRequest;
 use crate::chain::requests::{
     QueryClientStatesRequest, QueryConnectionsRequest, QueryPacketCommitmentsRequest,
@@ -98,14 +99,11 @@ pub trait NearIbcContract {
             port_id, channel_id
         );
 
-        let port_id = serde_json::to_string(port_id).unwrap();
-        let channel_id = serde_json::to_string(channel_id).unwrap();
-
         self.get_rt()
             .block_on(
                 self.get_client().view(
                     self.get_contract_id().clone(),
-                    "query_channel_end".to_string(),
+                    "get_channel_end".to_string(),
                     json!({"port_id": port_id, "channel_id": channel_id})
                         .to_string()
                         .into_bytes(),
@@ -576,7 +574,7 @@ pub async fn test123() -> anyhow::Result<()> {
     dbg!(&connection_id.eq("connection-5"));
     let result = client
         .view(
-            "nearibc.testnet".parse()?,
+            CONTRACT_ACCOUNT_ID.parse()?,
             "get_connection_end".to_string(),
             json!({"connection_id": "connection-5".to_string()})
                 .to_string()

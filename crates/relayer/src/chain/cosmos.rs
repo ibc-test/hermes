@@ -12,7 +12,7 @@ use std::{cmp::Ordering, thread};
 
 use tokio::runtime::Runtime as TokioRuntime;
 use tonic::{codegen::http::Uri, metadata::AsciiMetadataValue};
-use tracing::{error, instrument, trace, warn};
+use tracing::{error, info, instrument, trace, warn};
 
 use ibc_proto::cosmos::base::node::v1beta1::ConfigResponse;
 use ibc_proto::cosmos::staking::v1beta1::Params as StakingParams;
@@ -1137,11 +1137,14 @@ impl ChainEndpoint for CosmosSdkChain {
         match include_proof {
             IncludeProof::Yes => {
                 let proof = res.proof.ok_or_else(Error::empty_response_proof)?;
+                info!(
+                    "{}: [query_consensus_state] at height {} with proof: {:?} {:?}",
+                    self.id(), height, consensus_state, proof
+                );
                 Ok((consensus_state, Some(proof)))
             }
             IncludeProof::No => Ok((consensus_state, None)),
         }
-
     }
 
     fn query_client_connections(
@@ -1286,7 +1289,10 @@ impl ChainEndpoint for CosmosSdkChain {
                 )?;
                 let connection_end =
                     ConnectionEnd::decode_vec(&res.value).map_err(Error::decode)?;
-
+                info!(
+                    "{}: [query_connection] of {:?} at {} with proof: {:?}",
+                    self.id(), connection_end, request.height, res
+                );
                 Ok((
                     connection_end,
                     Some(res.proof.ok_or_else(Error::empty_response_proof)?),

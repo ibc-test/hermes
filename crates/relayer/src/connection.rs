@@ -1210,7 +1210,10 @@ impl<ChainA: ChainHandle, ChainB: ChainHandle> Connection<ChainA, ChainB> {
             version: src_connection.versions()[0].clone(),
             signer,
         };
-
+        info!(
+            "{}: [build_conn_ack] - MsgConnectionOpenAck before sending: {:?}",
+            self.dst_chain().id(), new_msg
+        );
         msgs.push(new_msg.to_any());
 
         Ok((msgs, src_client_target_height))

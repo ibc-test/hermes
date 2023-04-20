@@ -1180,6 +1180,14 @@ impl<DstChain: ChainHandle, SrcChain: ChainHandle> ForeignClient<DstChain, SrcCh
             trusted_height,
             header.height(),
         );
+        match &header {
+            AnyHeader::Tendermint(header) => info!(
+                "{}: [build_update_client_with_trusted] - header: {:?}",
+                self.id(),
+                header.signed_header
+            ),
+            _ => (),
+        }
 
         msgs.push(
             MsgUpdateClient {

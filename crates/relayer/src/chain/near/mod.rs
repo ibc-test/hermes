@@ -57,7 +57,7 @@ use ibc_proto::{
         core::channel::v1::PacketState,
         lightclients::solomachine::v2::{
             ClientStateData, ConnectionStateData, ConsensusStateData, DataType, HeaderData,
-            SignBytes, TimestampedSignatureData,
+            SignBytes, TimestampedSignatureData, ChannelStateData,
         },
     },
     protobuf::Protobuf,
@@ -124,12 +124,12 @@ mod light_client;
 pub mod rpc;
 
 pub const REVISION_NUMBER: u64 = 0;
+pub const CLIENT_DIVERSIFIER: &str = "NEAR";
+pub const CONTRACT_ACCOUNT_ID: &str = "v1.nearibc.testnet";
 
 /// A struct used to start a Near chain instance in relayer
 #[derive(Debug)]
 pub struct NearChain {
-    sm_client_latest_height: u64,
-    sm_client_timestamp: u64,
     client: NearRpcClient,
     config: ChainConfig,
     keybase: KeyRing<Secp256k1KeyPair>,
@@ -164,7 +164,7 @@ impl NearChain {
     /// Subscribe Events
     /// todo near don't have events subscription
     fn subscribe_ibc_events(&self) -> Result<Vec<IbcEvent>> {
-        info!("NearChain: [subscribe_ibc_events]");
+        info!("{}: [subscribe_ibc_events]", self.id());
         todo!() //Bob
     }
 
@@ -176,8 +176,8 @@ impl NearChain {
         seq: &Sequence,
     ) -> Result<Receipt> {
         info!(
-            "NearChain: [get_packet_receipt] - port_id: {}, channel_id: {}, seq: {}",
-            port_id, channel_id, seq
+            "{}: [get_packet_receipt] - port_id: {}, channel_id: {}, seq: {}",
+            self.id(), port_id, channel_id, seq
         );
 
         let port_id = serde_json::to_string(port_id).unwrap();
@@ -195,7 +195,7 @@ impl NearChain {
 
     // fn get_clients(&self) -> Result<Vec<IdentifiedAnyClientState>> {
     //
-    //     info!("NearChain: [get_clients]");
+    //     info!("{}: [get_clients]", self.id());
     //     self.block_on(self.client.view(
     //         self.near_ibc_contract.clone(),
     //         "get_clients".to_string(),
@@ -206,8 +206,7 @@ impl NearChain {
     /// The function to submit IBC request to a Near chain
     /// This function handles most of the IBC reqeusts to Near, except the MMR root update
     fn deliver(&self, messages: Vec<Any>) -> Result<FinalExecutionOutcomeView> {
-        info!("NearChain: [deliver] - messages: {:?}", messages);
-        let msg = serde_json::to_string(&messages).unwrap();
+        info!("{}: [deliver] - messages: {:?}", self.id(), messages);
 
         let mut home_dir = dirs::home_dir().expect("Impossible to get your home dir!");
         home_dir.push(".near-credentials/testnet/my-account.testnet.json");
@@ -224,7 +223,7 @@ impl NearChain {
     }
 
     fn raw_transfer(&self, messages: Vec<Any>) -> Result<FinalExecutionOutcomeView> {
-        info!("NearChain: [raw_transfer] - messages: {:?}", messages);
+        info!("{}: [raw_transfer] - messages: {:?}", self.id(), messages);
         let msg = serde_json::to_string(&messages).unwrap();
 
         let signer = InMemorySigner::from_random("bob.testnet".parse().unwrap(), KeyType::ED25519);
@@ -249,14 +248,6 @@ impl NearChain {
         Ok(MerkleProof::default())
     }
 
-    fn get_sm_client_latest_height(&self) -> u64 {
-        self.sm_client_latest_height
-    }
-
-    fn get_sm_client_timestamp(&self) -> u64 {
-        self.sm_client_timestamp
-    }
-
     fn get_sm_client_pubkey(&self) -> PublicKey {
         PublicKey(
             tendermint::PublicKey::from_raw_secp256k1(
@@ -264,6 +255,16 @@ impl NearChain {
             )
             .unwrap(),
         )
+    }
+
+    fn get_sm_consensus_state(&self) -> SmConsensusState {
+        let public_key = self.get_sm_client_pubkey();
+        SmConsensusState {
+            public_key,
+            diversifier: CLIENT_DIVERSIFIER.to_string(),
+            timestamp: 9999,
+            root: CommitmentRoot::from_bytes(&public_key.to_bytes()),
+        }
     }
 
     fn sign_bytes_with_solomachine_pubkey(
@@ -279,28 +280,28 @@ impl NearChain {
         };
 
         debug!(
-            "ys-debug: [sign_bytes_with_solomachine_pubkey] - sequence {:?}, timestamp: {:?}, data_type: {:?}, data: {:?}",
-            sequence, timestamp, data_type, data
+            "{}: [sign_bytes_with_solomachine_pubkey] - sequence {:?}, timestamp: {:?}, data_type: {:?}, data: {:?}",
+            self.id(), sequence, timestamp, data_type, data
         );
         let bytes = SignBytes {
             sequence,
             timestamp,
-            diversifier: "oct".to_string(),
+            diversifier: CLIENT_DIVERSIFIER.to_string(),
             data_type,
             data,
         };
         let mut buf = Vec::new();
         Message::encode(&bytes, &mut buf).unwrap();
         debug!(
-            "ys-debug: [sign_bytes_with_solomachine_pubkey] - encoded_bytes: {:?}",
-            buf
+            "{}: [sign_bytes_with_solomachine_pubkey] - encoded_bytes: {:?}",
+            self.id(), buf
         );
 
         let key_pair = self.get_key().unwrap();
         let signature = key_pair.sign(&buf).unwrap();
         debug!(
-            "ys-debug: [sign_bytes_with_solomachine_pubkey] - signature: {:?}",
-            signature
+            "{}: [sign_bytes_with_solomachine_pubkey] - signature: {:?}",
+            self.id(), signature
         );
         let sig = Data {
             sum: Some(Sum::Single(Single { mode: 1, signature })),
@@ -309,8 +310,8 @@ impl NearChain {
         Message::encode(&sig, &mut buf).unwrap();
 
         debug!(
-            "ys-debug [sign_bytes_with_solomachine_pubkey] - sig_data: {:?}",
-            buf
+            "{}: [sign_bytes_with_solomachine_pubkey] - sig_data: {:?}",
+            self.id(), buf
         );
         buf
     }
@@ -336,17 +337,15 @@ impl ChainEndpoint for NearChain {
 
     // todo init NearChain
     fn bootstrap(config: ChainConfig, rt: Arc<TokioRuntime>) -> Result<Self, Error> {
-        info!("NearChain: [bootstrap]");
+        info!("{}: [bootstrap]", config.id);
         // Initialize key store and load key
         let keybase = KeyRing::new(config.key_store_type, &config.account_prefix, &config.id)
             .map_err(Error::key_base)?;
         Ok(NearChain {
-            sm_client_latest_height: 1,
-            sm_client_timestamp: 9999,
             client: NearRpcClient::new(config.rpc_addr.to_string().as_str()),
             config,
             keybase,
-            near_ibc_contract: AccountId::from_str("nearibc.testnet").unwrap(),
+            near_ibc_contract: AccountId::from_str(CONTRACT_ACCOUNT_ID).unwrap(),
             rt,
         })
     }
@@ -356,7 +355,7 @@ impl ChainEndpoint for NearChain {
     //     rt: Arc<TokioRuntime>,
     // ) -> Result<(EventReceiver, TxMonitorCmd), Error> {
     //     info!(
-    //         "NearChain: [init_event_mointor] >> websocket addr: {:?}",
+    //         "{}: [init_event_mointor] >> websocket addr: {:?}",
     //         self.config.websocket_addr.clone()
     //     );
     //     todo!()
@@ -426,8 +425,8 @@ impl ChainEndpoint for NearChain {
         proto_msgs: TrackedMsgs,
     ) -> Result<Vec<IbcEventWithHeight>, Error> {
         info!(
-            "NearChain: [send_messages_and_wait_commit] - proto_msgs: {:?}",
-            proto_msgs
+            "{}: [send_messages_and_wait_commit] - proto_msgs: {:?}",
+            self.id(), proto_msgs
         );
 
         let result = match proto_msgs.tracking_id {
@@ -437,8 +436,8 @@ impl ChainEndpoint for NearChain {
                 })?;
                 // result.transaction_outcome
                 debug!(
-                    "NearChain: [send_messages_and_wait_commit] - extrics_hash: {:?}",
-                    result
+                    "{}: [send_messages_and_wait_commit] - extrics_hash: {:?}",
+                    self.id(), result
                 );
                 result
             }
@@ -452,8 +451,8 @@ impl ChainEndpoint for NearChain {
                     })?;
 
                     debug!(
-                        "NearChain: [send_messages_and_wait_commit] - extrics_hash: {:?}",
-                        result
+                        "{}: [send_messages_and_wait_commit] - extrics_hash: {:?}",
+                        self.id(), result
                     );
                     result
                 }
@@ -472,8 +471,8 @@ impl ChainEndpoint for NearChain {
         proto_msgs: TrackedMsgs,
     ) -> Result<Vec<TxResponse>, Error> {
         info!(
-            "NearChain: [send_messages_and_wait_check_tx] - proto_msgs: {:?}",
-            proto_msgs
+            "{}: [send_messages_and_wait_check_tx] - proto_msgs: {:?}",
+            self.id(), proto_msgs
         );
 
         match proto_msgs.tracking_id {
@@ -482,8 +481,8 @@ impl ChainEndpoint for NearChain {
                     Error::report_error(format!("deliever error ({:?})", e.to_string()))
                 })?;
                 debug!(
-                    "NearChain: [send_messages_and_wait_commit] - extrics_hash: {:?}",
-                    result
+                    "{}: [send_messages_and_wait_commit] - extrics_hash: {:?}",
+                    self.id(), result
                 );
             }
             TrackingId::Static(value) => match value {
@@ -493,8 +492,8 @@ impl ChainEndpoint for NearChain {
                         .map_err(|_| Error::report_error("ics20_transfer".to_string()))?;
 
                     debug!(
-                        "NearChain: [send_messages_and_wait_commit] - extrics_hash: {:?}",
-                        result
+                        "{}: [send_messages_and_wait_commit] - extrics_hash: {:?}",
+                        self.id(), result
                     );
                 }
                 _ => {
@@ -502,8 +501,8 @@ impl ChainEndpoint for NearChain {
                         Error::report_error(format!("deliever error ({:?})", e.to_string()))
                     })?;
                     debug!(
-                        "NearChain: [send_messages_and_wait_commit] - extrics_hash: {:?}",
-                        result
+                        "{}: [send_messages_and_wait_commit] - extrics_hash: {:?}",
+                        self.id(), result
                     );
                 }
             },
@@ -563,7 +562,7 @@ impl ChainEndpoint for NearChain {
     }
 
     fn query_commitment_prefix(&self) -> Result<CommitmentPrefix, Error> {
-        info!("NearChain: [query_commitment_prefix]");
+        info!("{}: [query_commitment_prefix]", self.id());
         self.get_commitment_prefix()
             .map_err(|e| Error::report_error("invalid_commitment_prefix".to_string()))
 
@@ -579,7 +578,7 @@ impl ChainEndpoint for NearChain {
     }
 
     fn query_application_status(&self) -> Result<ChainStatus, Error> {
-        info!("NearChain: [query_application_status]");
+        info!("{}: [query_application_status]", self.id());
 
         let latest_height = self
             .get_latest_height()
@@ -595,7 +594,7 @@ impl ChainEndpoint for NearChain {
         &self,
         request: QueryClientStatesRequest,
     ) -> Result<Vec<IdentifiedAnyClientState>, Error> {
-        info!("NearChain: [query_clients] - request: {:?}", request);
+        info!("{}: [query_clients] - request: {:?}", self.id(), request);
 
         let result = self
             .get_clients(request)
@@ -610,8 +609,8 @@ impl ChainEndpoint for NearChain {
         include_proof: IncludeProof,
     ) -> Result<(AnyClientState, Option<MerkleProof>), Error> {
         info!(
-            "NearChain: [query_client_state] - request: {:?} include_proof: {:?}",
-            request, include_proof
+            "{}: [query_client_state] - request: {:?} include_proof: {:?}",
+            self.id(), request, include_proof
         );
 
         let QueryClientStateRequest { client_id, height } = request;
@@ -643,8 +642,8 @@ impl ChainEndpoint for NearChain {
         include_proof: IncludeProof,
     ) -> Result<(AnyConsensusState, Option<MerkleProof>), Error> {
         info!(
-            "NearChain: [query_consensus_state] - request: {:?} include_proof: {:?}",
-            request, include_proof
+            "{}: [query_consensus_state] - request: {:?} include_proof: {:?}",
+            self.id(), request, include_proof
         );
 
         // query_height to amit to search chain height
@@ -669,7 +668,7 @@ impl ChainEndpoint for NearChain {
     //     &self,
     //     request: QueryConsensusStatesRequest,
     // ) -> Result<Vec<AnyConsensusStateWithHeight>, Error> {
-    //     info!("NearChain: [query_consensus_states]");
+    //     info!("{}: [query_consensus_states]");
     //
     //     let request_client_id = ClientId::from_str(request.client_id.as_str())
     //         .map_err(|_| Error::report_error("identifier".to_string()))?;
@@ -689,7 +688,7 @@ impl ChainEndpoint for NearChain {
     //         any_consensus_state_with_height.push(tmp.clone());
     //
     //         info!(
-    //             "NearChain: [query_consensus_state] >> any_consensus_state_with_height: {:?}",
+    //             "{}: [query_consensus_state] >> any_consensus_state_with_height: {:?}",
     //             tmp
     //         );
     //     }
@@ -704,8 +703,8 @@ impl ChainEndpoint for NearChain {
         request: QueryUpgradedClientStateRequest,
     ) -> Result<(AnyClientState, MerkleProof), Error> {
         info!(
-            "NearChain: [query_upgraded_client_state] - request: {:?}",
-            request
+            "{}: [query_upgraded_client_state] - request: {:?}",
+            self.id(), request
         );
 
         todo!()
@@ -716,8 +715,8 @@ impl ChainEndpoint for NearChain {
         request: QueryUpgradedConsensusStateRequest,
     ) -> Result<(AnyConsensusState, MerkleProof), Error> {
         info!(
-            "NearChain: [query_upgraded_consensus_state] - request: {:?}",
-            request
+            "{}: [query_upgraded_consensus_state] - request: {:?}",
+            self.id(), request
         );
 
         todo!()
@@ -727,7 +726,7 @@ impl ChainEndpoint for NearChain {
         &self,
         request: QueryConnectionsRequest,
     ) -> Result<Vec<IdentifiedConnectionEnd>, Error> {
-        info!("NearChain: [query_connections] - request: {:?}", request);
+        info!("{}: [query_connections] - request: {:?}", self.id(), request);
 
         let result = self
             .get_connections(request)
@@ -741,8 +740,8 @@ impl ChainEndpoint for NearChain {
         request: QueryClientConnectionsRequest,
     ) -> Result<Vec<ConnectionId>, Error> {
         info!(
-            "NearChain: [query_client_connections] - request: {:?}",
-            request
+            "{}: [query_client_connections] - request: {:?}",
+            self.id(), request
         );
         todo!() //Bob
     }
@@ -753,8 +752,8 @@ impl ChainEndpoint for NearChain {
         include_proof: IncludeProof,
     ) -> Result<(ConnectionEnd, Option<MerkleProof>), Error> {
         info!(
-            "NearChain: [query_connection] - request: {:?} include_proof: {:?}",
-            request, include_proof
+            "{}: [query_connection] - request: {:?} include_proof: {:?}",
+            self.id(), request, include_proof
         );
 
         let QueryConnectionRequest {
@@ -801,8 +800,8 @@ impl ChainEndpoint for NearChain {
         request: QueryConnectionChannelsRequest,
     ) -> Result<Vec<IdentifiedChannelEnd>, Error> {
         info!(
-            "NearChain: [query_connection_channels] - request: {:?}",
-            request
+            "{}: [query_connection_channels] - request: {:?}",
+            self.id(), request
         );
 
         let result = self
@@ -816,7 +815,7 @@ impl ChainEndpoint for NearChain {
         &self,
         request: QueryChannelsRequest,
     ) -> Result<Vec<IdentifiedChannelEnd>, Error> {
-        info!("NearChain: [query_channels] - request: {:?}", request);
+        info!("{}: [query_channels] - request: {:?}", self.id(), request);
 
         let result = self
             .get_channels(request)
@@ -831,8 +830,8 @@ impl ChainEndpoint for NearChain {
         include_proof: IncludeProof,
     ) -> Result<(ChannelEnd, Option<MerkleProof>), Error> {
         info!(
-            "NearChain: [query_channel] - request: {:?} include_proof: {:?}",
-            request, include_proof
+            "{}: [query_channel] - request: {:?} include_proof: {:?}",
+            self.id(), request, include_proof
         );
 
         let QueryChannelRequest {
@@ -871,8 +870,8 @@ impl ChainEndpoint for NearChain {
         request: QueryChannelClientStateRequest,
     ) -> Result<Option<IdentifiedAnyClientState>, Error> {
         info!(
-            "NearChain: [query_channel_client_state] - request: {:?}",
-            request
+            "{}: [query_channel_client_state] - request: {:?}",
+            self.id(), request
         );
 
         todo!()
@@ -923,8 +922,8 @@ impl ChainEndpoint for NearChain {
         request: QueryPacketCommitmentsRequest,
     ) -> Result<(Vec<Sequence>, ICSHeight), Error> {
         info!(
-            "NearChain: [query_packet_commitments] - request: {:?}",
-            request
+            "{}: [query_packet_commitments] - request: {:?}",
+            self.id(), request
         );
 
         let packet_commitments = self
@@ -993,8 +992,8 @@ impl ChainEndpoint for NearChain {
         request: QueryUnreceivedPacketsRequest,
     ) -> Result<Vec<Sequence>, Error> {
         info!(
-            "NearChain: [query_unreceived_packets] - request: {:?}",
-            request
+            "{}: [query_unreceived_packets] - request: {:?}",
+            self.id(), request
         );
 
         let port_id = PortId::from_str(request.port_id.as_str())
@@ -1069,8 +1068,8 @@ impl ChainEndpoint for NearChain {
         request: QueryPacketAcknowledgementsRequest,
     ) -> Result<(Vec<Sequence>, ICSHeight), Error> {
         info!(
-            "NearChain: [query_packet_acknowledgements] - request: {:?}",
-            request
+            "{}: [query_packet_acknowledgements] - request: {:?}",
+            self.id(), request
         );
 
         let packet_acknowledgements = self
@@ -1092,8 +1091,8 @@ impl ChainEndpoint for NearChain {
         request: QueryUnreceivedAcksRequest,
     ) -> Result<Vec<Sequence>, Error> {
         info!(
-            "NearChain: [query_unreceived_acknowledgements] - request: {:?}",
-            request
+            "{}: [query_unreceived_acknowledgements] - request: {:?}",
+            self.id(), request
         );
 
         let port_id = PortId::from_str(request.port_id.as_str())
@@ -1127,8 +1126,8 @@ impl ChainEndpoint for NearChain {
         include_proof: IncludeProof,
     ) -> Result<(Sequence, Option<MerkleProof>), Error> {
         info!(
-            "NearChain: [query_next_sequence_receive] - request: {:?}",
-            request
+            "{}: [query_next_sequence_receive] - request: {:?}",
+            self.id(), request
         );
 
         let QueryNextSequenceReceiveRequest {
@@ -1169,7 +1168,7 @@ impl ChainEndpoint for NearChain {
     }
 
     fn query_txs(&self, request: QueryTxRequest) -> Result<Vec<IbcEventWithHeight>, Error> {
-        info!("NearChain: [query_txs] - request: {:?}", request);
+        info!("{}: [query_txs] - request: {:?}", self.id(), request);
 
         match request {
             QueryTxRequest::Client(request) => {
@@ -1205,7 +1204,7 @@ impl ChainEndpoint for NearChain {
         &self,
         request: QueryPacketEventDataRequest,
     ) -> Result<Vec<IbcEventWithHeight>, Error> {
-        info!("NearChain: [query_packet_events] - request: {:?}", request);
+        info!("{}: [query_packet_events] - request: {:?}", self.id(), request);
         todo!()
     }
 
@@ -1214,17 +1213,11 @@ impl ChainEndpoint for NearChain {
         request: QueryHostConsensusStateRequest,
     ) -> Result<Self::ConsensusState, Error> {
         info!(
-            "NearChain: [query_host_consensus_state] - request: {:?}",
-            request
+            "{}: [query_host_consensus_state] - request: {:?}",
+            self.id(), request
         );
 
-        let pk = self.get_sm_client_pubkey();
-        Ok(SmConsensusState {
-            public_key: pk,
-            diversifier: "oct".to_string(),
-            timestamp: self.get_sm_client_timestamp(),
-            root: CommitmentRoot::from_bytes(&pk.to_bytes()),
-        })
+        Ok(self.get_sm_consensus_state())
     }
 
     fn build_client_state(
@@ -1233,23 +1226,14 @@ impl ChainEndpoint for NearChain {
         dst_config: ClientSettings,
     ) -> Result<Self::ClientState, Error> {
         info!(
-            "NearChain: [build_client_state] - height: {:?} dst_config: {:?}",
-            height, dst_config
+            "{}: [build_client_state] - height: {:?} dst_config: {:?}",
+            self.id(), height, dst_config
         );
-        let pk = self.get_sm_client_pubkey();
-        let duration_since_epoch = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap();
-        let timestamp_nanos = duration_since_epoch.as_nanos(); // u128
+
         Ok(SmClientState {
             sequence: height.revision_height(),
             is_frozen: false,
-            consensus_state: SmConsensusState {
-                public_key: pk,
-                diversifier: "oct".to_string(),
-                timestamp: self.get_sm_client_timestamp(),
-                root: CommitmentRoot::from_bytes(&pk.to_bytes()),
-            },
+            consensus_state: self.get_sm_consensus_state(),
             allow_update_after_proposal: false,
         })
     }
@@ -1259,21 +1243,11 @@ impl ChainEndpoint for NearChain {
         light_block: Self::LightBlock,
     ) -> Result<Self::ConsensusState, Error> {
         info!(
-            "NearChain: [build_consensus_state] - light_block: {:?}",
-            light_block
+            "{}: [build_consensus_state] - light_block: {:?}",
+            self.id(), light_block
         );
-        let pk = self.get_sm_client_pubkey();
-        let duration_since_epoch = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap();
-        let timestamp_nanos = duration_since_epoch.as_nanos(); // u128
 
-        Ok(SmConsensusState {
-            public_key: pk,
-            diversifier: "oct".to_string(),
-            timestamp: self.get_sm_client_timestamp(),
-            root: CommitmentRoot::from_bytes(&pk.to_bytes()),
-        })
+        Ok(self.get_sm_consensus_state())
     }
 
     fn build_header(
@@ -1283,8 +1257,8 @@ impl ChainEndpoint for NearChain {
         client_state: &AnyClientState,
     ) -> Result<(Self::Header, Vec<Self::Header>), Error> {
         info!(
-            "NearChain [build_header] - trusted_height: {:?} target_height: {:?} client_state: {:?}",
-            trusted_height, target_height, client_state
+            "{}: [build_header] - trusted_height: {:?} target_height: {:?} client_state: {:?}",
+            self.id(), trusted_height, target_height, client_state
         );
 
         if trusted_height.revision_height() >= target_height.revision_height() {
@@ -1301,7 +1275,7 @@ impl ChainEndpoint for NearChain {
             timestamp: 0,
             signature: vec![],
             new_public_key: None,
-            new_diversifier: "oct".to_string(),
+            new_diversifier: CLIENT_DIVERSIFIER.to_string(),
         };
         let mut hs: Vec<Self::Header> = Vec::new();
         let start = if trusted_height.revision_height() > cs.sequence {
@@ -1317,7 +1291,7 @@ impl ChainEndpoint for NearChain {
 
         for seq in start..end {
             let pk = self.get_sm_client_pubkey();
-            debug!("ye-debug: [build_header] - pk: {:?}", pk);
+            debug!("{}: [build_header] - pk: {:?}", self.id(), pk);
             let duration_since_epoch = SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap();
@@ -1327,7 +1301,7 @@ impl ChainEndpoint for NearChain {
                 .as_nanos() as u64; // u128
             let data = SmHeaderData {
                 new_pub_key: Some(pk),
-                new_diversifier: "oct".to_string(),
+                new_diversifier: CLIENT_DIVERSIFIER.to_string(),
             };
             timestamp = timestamp + 1;
 
@@ -1343,7 +1317,7 @@ impl ChainEndpoint for NearChain {
                 timestamp,
                 signature: sig_data,
                 new_public_key: Some(pk),
-                new_diversifier: "oct".to_string(),
+                new_diversifier: CLIENT_DIVERSIFIER.to_string(),
             };
 
             if seq == end - 1 {
@@ -1375,8 +1349,8 @@ impl ChainEndpoint for NearChain {
         height: ICSHeight,
     ) -> Result<(Option<AnyClientState>, Proofs), Error> {
         info!(
-            "NearChain [build_connection_proofs_and_client_state] - message_type: {:?} connection_id: {:?} client_id: {:?} height: {:?}",
-            message_type, connection_id, client_id, height
+            "{}: [build_connection_proofs_and_client_state] - message_type: {:?} connection_id: {:?} client_id: {:?} height: {:?}",
+            self.id(), message_type, connection_id, client_id, height
         );
 
         let (connection_end, _maybe_connection_proof) = self.query_connection(
@@ -1399,7 +1373,7 @@ impl ChainEndpoint for NearChain {
             .into(),
             connection: Some(connection_end.clone().into()),
         };
-        debug!("ys-debug: ConnectionStateData: {:?}", data);
+        debug!("{}: ConnectionStateData: {:?}", self.id(), data);
         Message::encode(&data, &mut buf).unwrap();
 
         let duration_since_epoch = SystemTime::now()
@@ -1419,8 +1393,8 @@ impl ChainEndpoint for NearChain {
             timestamp: timestamp_nanos,
         };
         debug!(
-            "ys-debug: proof_init TimestampedSignatureData: {:?}",
-            timestamped
+            "{}: proof_init TimestampedSignatureData: {:?}",
+            self.id(), timestamped
         );
         let mut proof_init = Vec::new();
         Message::encode(&timestamped, &mut proof_init).unwrap();
@@ -1472,7 +1446,7 @@ impl ChainEndpoint for NearChain {
                     .into(),
                     client_state: Some(client_state_value.clone().into()),
                 };
-                debug!("ys-debug: ClientStateData: {:?}", data);
+                debug!("{}: ClientStateData: {:?}", self.id(), data);
                 Message::encode(&data, &mut buf).unwrap();
 
                 // let duration_since_epoch = SystemTime::now()
@@ -1492,8 +1466,8 @@ impl ChainEndpoint for NearChain {
                     timestamp: timestamp_nanos,
                 };
                 debug!(
-                    "ys-debug: client_proof TimestampedSignatureData: {:?}",
-                    timestamped
+                    "{}: client_proof TimestampedSignatureData: {:?}",
+                    self.id(), timestamped
                 );
                 let mut proof_client = Vec::new();
                 Message::encode(&timestamped, &mut proof_client).unwrap();
@@ -1526,7 +1500,7 @@ impl ChainEndpoint for NearChain {
                     .into(),
                     consensus_state: Some(consensus_state_value.clone().into()),
                 };
-                debug!("ys-debug: ConsensusStateData: {:?}", data);
+                debug!("{}: ConsensusStateData: {:?}", self.id(), data);
                 Message::encode(&data, &mut buf).unwrap();
 
                 // let duration_since_epoch = SystemTime::now()
@@ -1546,8 +1520,8 @@ impl ChainEndpoint for NearChain {
                     timestamp: timestamp_nanos,
                 };
                 debug!(
-                    "ys-debug: consensus_proof TimestampedSignatureData: {:?}",
-                    timestamped
+                    "{}: consensus_proof TimestampedSignatureData: {:?}",
+                    self.id(), timestamped
                 );
                 let mut consensus_state_proof = Vec::new();
                 Message::encode(&timestamped, &mut consensus_state_proof).unwrap();
@@ -1578,6 +1552,61 @@ impl ChainEndpoint for NearChain {
             )
             .map_err(Error::malformed_proof)?,
         ))
+    }
+
+    /// Builds the proof for channel handshake messages.
+    fn build_channel_proofs(
+        &self,
+        port_id: &PortId,
+        channel_id: &ChannelId,
+        height: ICSHeight,
+    ) -> Result<Proofs, Error> {
+        // Collect all proofs as required
+        let (channel, _maybe_channel_proof) = self.query_channel(
+            QueryChannelRequest {
+                port_id: port_id.clone(),
+                channel_id: channel_id.clone(),
+                height: QueryHeight::Specific(height),
+            },
+            IncludeProof::No,
+        )?;
+
+        let mut buf = Vec::new();
+        let data = ChannelStateData {
+            path: ("/ibc/channelEnds%2Fports%2F".to_string()
+                + port_id.as_str()
+                + &"%2Fchannels%2F".to_string()
+                + channel_id.as_str())
+            .into(),
+            channel: Some(channel.clone().into()),
+        };
+        println!("ys-debug: ChannelStateData: {:?}", data);
+        Message::encode(&data, &mut buf).unwrap();
+
+        let duration_since_epoch = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap();
+        let timestamp_nanos = duration_since_epoch.as_nanos() as u64; // u128
+
+        let sig_data = self.sign_bytes_with_solomachine_pubkey(
+            height.revision_height() + 1,
+            timestamp_nanos,
+            DataType::ChannelState.into(),
+            buf.to_vec(),
+        );
+
+        let timestamped = TimestampedSignatureData {
+            signature_data: sig_data,
+            timestamp: timestamp_nanos,
+        };
+        let mut channel_proof = Vec::new();
+        Message::encode(&timestamped, &mut channel_proof).unwrap();
+
+        let channel_proof_bytes =
+            CommitmentProofBytes::try_from(channel_proof).map_err(Error::malformed_proof)?;
+
+        Proofs::new(channel_proof_bytes, None, None, None, height.increment())
+            .map_err(Error::malformed_proof)
     }
 
     fn subscribe(&mut self) -> std::result::Result<Subscription, Error> {
