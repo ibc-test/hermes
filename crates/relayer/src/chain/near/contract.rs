@@ -1,9 +1,9 @@
 use crate::chain::near::rpc::client::NearRpcClient;
 use crate::chain::near::CONTRACT_ACCOUNT_ID;
-use crate::chain::requests::QueryChannelsRequest;
+use crate::chain::requests::{QueryChannelsRequest, QueryPacketAcknowledgementsRequest};
 use crate::chain::requests::{
-    QueryClientStatesRequest, QueryConnectionsRequest, QueryPacketCommitmentsRequest,
-    QueryUnreceivedAcksRequest,
+    QueryClientConnectionsRequest, QueryClientStatesRequest, QueryConnectionsRequest,
+    QueryPacketCommitmentsRequest, QueryUnreceivedAcksRequest,
 };
 use crate::client_state::{AnyClientState, IdentifiedAnyClientState};
 use crate::consensus_state::AnyConsensusState;
@@ -222,7 +222,7 @@ pub trait NearIbcContract {
     fn get_clients(
         &self,
         request: QueryClientStatesRequest,
-    ) -> anyhow::Result<Vec<IdentifiedAnyClientState>> {
+    ) -> anyhow::Result<Vec<(ClientId, Vec<u8>)>> {
         info!("NearIbcContract: [get_clients] - request: {:?}", request);
 
         let request = serde_json::to_string(&request).unwrap();
@@ -276,43 +276,63 @@ pub trait NearIbcContract {
             .json()
     }
 
-    fn get_commitment_packet_state(
+    fn get_packet_commitments(
         &self,
         request: QueryPacketCommitmentsRequest,
-    ) -> anyhow::Result<Vec<PacketState>> {
+    ) -> anyhow::Result<Vec<Sequence>> {
         info!(
-            "NearIbcContract: [get_commitment_packet_state] - request: {:?}",
+            "NearIbcContract: [get_packet_commitments] - request: {:?}",
             request
         );
         self.get_rt()
-            .block_on(self.get_client().view(
-                self.get_contract_id().clone(),
-                "get_commitment_packet_state".to_string(),
-                json!({}).to_string().into_bytes(),
-            ))
-            .expect("Failed to get_commitment_packet_state.")
+            .block_on(
+                self.get_client().view(
+                    self.get_contract_id().clone(),
+                    "get_packet_commitments".to_string(),
+                    json!({
+                        "port_id": request.port_id.to_string(),
+                        "channel_id": request.channel_id.to_string()
+                    })
+                    .to_string()
+                    .into_bytes(),
+                ),
+            )
+            .expect("Failed to get_packet_commitments.")
             .json()
     }
 
-    fn get_acknowledge_packet_state(&self) -> anyhow::Result<Vec<PacketState>> {
-        info!("NearIbcContract: [get_acknowledge_packet_state]");
+    fn get_packet_acknowledgements(
+        &self,
+        request: QueryPacketAcknowledgementsRequest,
+    ) -> anyhow::Result<Vec<Sequence>> {
+        info!("NearIbcContract: [get_packet_acknowledgements]");
         self.get_rt()
-            .block_on(self.get_client().view(
-                self.get_contract_id().clone(),
-                "get_acknowledge_packet_state".to_string(),
-                json!({}).to_string().into_bytes(),
-            ))
-            .expect("Failed to get_acknowledge_packet_state.")
+            .block_on(
+                self.get_client().view(
+                    self.get_contract_id().clone(),
+                    "get_packet_acknowledgements".to_string(),
+                    json!({
+                        "port_id": request.port_id.to_string(),
+                        "channel_id": request.channel_id.to_string()
+                    })
+                    .to_string()
+                    .into_bytes(),
+                ),
+            )
+            .expect("Failed to get_packet_acknowledgements.")
             .json()
     }
 
     /// get connection_identifier vector by client_identifier
-    fn get_client_connections(&self, client_id: &ClientId) -> anyhow::Result<Vec<ConnectionId>> {
+    fn get_client_connections(
+        &self,
+        request: &QueryClientConnectionsRequest,
+    ) -> anyhow::Result<Vec<ConnectionId>> {
+        let client_id = request.client_id.to_string();
         info!(
             "NearIbcContract: [get_client_connections] - client_id: {:?}",
             client_id
         );
-        let client_id = serde_json::to_string(client_id).unwrap();
         self.get_rt()
             .block_on(self.get_client().view(
                 self.get_contract_id().clone(),
@@ -331,7 +351,7 @@ pub trait NearIbcContract {
             "NearIbcContract: [get_connection_channels] - connection_id: {:?}",
             connection_id
         );
-        let connection_id = serde_json::to_string(connection_id).unwrap();
+        let connection_id = connection_id.to_string();
         self.get_rt()
             .block_on(
                 self.get_client().view(

@@ -86,7 +86,7 @@ impl AnyClientState {
     pub fn trust_threshold(&self) -> Option<TrustThreshold> {
         match self {
             AnyClientState::Tendermint(state) => Some(state.trust_threshold),
-            AnyClientState::Solomachine(state) => None,
+            AnyClientState::Solomachine(_state) => Some(TrustThreshold::TWO_THIRDS),
 
             #[cfg(test)]
             AnyClientState::Mock(_) => None,
