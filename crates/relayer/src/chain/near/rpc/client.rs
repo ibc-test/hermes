@@ -2,12 +2,16 @@ use std::fmt::Debug;
 use std::ops::Mul;
 use std::time::Duration;
 
+use crate::chain::near::constants::ONE_TERA_GAS;
+use crate::chain::near::rpc::result::ViewResultDetails;
 use near_crypto::{InMemorySigner, PublicKey, Signer};
 use near_jsonrpc_client::errors::JsonRpcError;
 use near_jsonrpc_client::methods::health::RpcStatusError;
 use near_jsonrpc_client::methods::query::RpcQueryRequest;
 use near_jsonrpc_client::{methods, JsonRpcClient, MethodCallResult};
+use near_jsonrpc_primitives::types::changes::RpcStateChangesInBlockByTypeRequest;
 use near_jsonrpc_primitives::types::query::QueryResponseKind;
+use near_jsonrpc_primitives::types::transactions::TransactionInfo;
 use near_primitives::account::{AccessKey, AccessKeyPermission};
 use near_primitives::hash::CryptoHash;
 use near_primitives::transaction::{
@@ -17,12 +21,10 @@ use near_primitives::transaction::{
 use near_primitives::types::{AccountId, Balance, BlockId, Finality, Gas, StoreKey};
 use near_primitives::views::{
     AccessKeyView, AccountView, BlockView, ContractCodeView, FinalExecutionOutcomeView,
-    QueryRequest, StatusResponse,
+    QueryRequest, StateChangesRequestView, StatusResponse, StateChangeWithCauseView,
 };
 use tokio_retry::strategy::{jitter, ExponentialBackoff};
 use tokio_retry::Retry;
-use crate::chain::near::constants::ONE_TERA_GAS;
-use crate::chain::near::rpc::result::ViewResultDetails;
 
 pub(crate) const DEFAULT_CALL_FN_GAS: Gas = 10_000_000_000_000;
 pub(crate) const DEFAULT_CALL_DEPOSIT: Balance = 0;
@@ -196,7 +198,7 @@ impl NearRpcClient {
                 request: QueryRequest::ViewState {
                     account_id: contract_id,
                     prefix: StoreKey::from(prefix.map(Vec::from).unwrap_or_default()),
-                    include_proof: false
+                    include_proof: false,
                 },
             })
             .await?;
@@ -205,6 +207,27 @@ impl NearRpcClient {
             QueryResponseKind::ViewState(state) => anyhow::Ok(state),
             _ => anyhow::bail!(ERR_INVALID_VARIANT),
         }
+    }
+
+    pub(crate) async fn get_state_changes_of(
+        &self,
+        contract_id: AccountId,
+        block_id: Option<BlockId>,
+    ) -> anyhow::Result<Vec<StateChangeWithCauseView>> {
+        let block_reference = block_id
+            .map(Into::into)
+            .unwrap_or_else(|| Finality::None.into());
+
+        let query_resp = self
+            .query(&RpcStateChangesInBlockByTypeRequest {
+                block_reference,
+                state_changes_request: StateChangesRequestView::AccountChanges {
+                    account_ids: [contract_id].into(),
+                },
+            })
+            .await?;
+
+        Ok(query_resp.changes)
     }
 
     pub(crate) async fn view_account(
@@ -261,6 +284,14 @@ impl NearRpcClient {
             .await?;
 
         Ok(block_view)
+    }
+
+    pub(crate) async fn view_tx(&self, transaction_info: TransactionInfo) -> anyhow::Result<FinalExecutionOutcomeView> {
+        let tx_view = self
+            .query(&methods::tx::RpcTransactionStatusRequest { transaction_info })
+            .await?;
+
+        Ok(tx_view)
     }
 
     pub(crate) async fn deploy(

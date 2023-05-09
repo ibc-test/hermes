@@ -41,8 +41,8 @@ use crate::{
     consensus_state::{AnyConsensusState, AnyConsensusStateWithHeight},
     denom::DenomTrace,
     error::Error,
-    event::monitor::EventBatch,
-    event::IbcEventWithHeight,
+    event::{monitor::EventBatch, near_event_monitor::TxMonitorCmd},
+    event::{IbcEventWithHeight, near_event_monitor::NearEventMonitor, monitor::EventReceiver},
     keyring::{KeyRing, Secp256k1KeyPair, SigningKeyPair, Test},
     misbehaviour::MisbehaviourEvidence,
 };
@@ -126,6 +126,7 @@ pub mod rpc;
 pub const REVISION_NUMBER: u64 = 0;
 pub const CLIENT_DIVERSIFIER: &str = "NEAR";
 pub const CONTRACT_ACCOUNT_ID: &str = "v2.nearibc.testnet";
+pub const SIGNER_ACCOUNT_TESTNET: &str = "my-account.testnet";
 const MINIMUM_ATTACHED_NEAR_FOR_DELEVER_MSG: u128 = 10_000_000_000_000_000_000_000;
 
 /// A struct used to start a Near chain instance in relayer
@@ -136,6 +137,7 @@ pub struct NearChain {
     keybase: KeyRing<Secp256k1KeyPair>,
     near_ibc_contract: AccountId,
     rt: Arc<TokioRuntime>,
+    tx_monitor_cmd: Option<TxMonitorCmd>,
 }
 
 impl NearIbcContract for NearChain {
@@ -197,23 +199,13 @@ impl NearChain {
         todo!() // todo the receipt can't deserialize
     }
 
-    // fn get_clients(&self) -> Result<Vec<IdentifiedAnyClientState>> {
-    //
-    //     info!("{}: [get_clients]", self.id());
-    //     self.block_on(self.client.view(
-    //         self.near_ibc_contract.clone(),
-    //         "get_clients".to_string(),
-    //         json!({}).to_string().into_bytes()
-    //     )).expect("Failed to get_clients.").json()
-    // }
-
     /// The function to submit IBC request to a Near chain
     /// This function handles most of the IBC reqeusts to Near, except the MMR root update
     fn deliver(&self, messages: Vec<Any>) -> Result<FinalExecutionOutcomeView> {
         info!("{}: [deliver] - messages: {:?}", self.id(), messages);
 
         let mut home_dir = dirs::home_dir().expect("Impossible to get your home dir!");
-        home_dir.push(".near-credentials/testnet/my-account.testnet.json");
+        home_dir.push(format!(".near-credentials/testnet/{}.json", self.get_signer().unwrap().as_ref()));
         let signer = InMemorySigner::from_file(home_dir.as_path()).unwrap();
 
         self.block_on(self.client.call(
@@ -354,19 +346,9 @@ impl ChainEndpoint for NearChain {
             keybase,
             near_ibc_contract: AccountId::from_str(CONTRACT_ACCOUNT_ID).unwrap(),
             rt,
+            tx_monitor_cmd: None,
         })
     }
-
-    // fn init_event_monitor(
-    //     &self,
-    //     rt: Arc<TokioRuntime>,
-    // ) -> Result<(EventReceiver, TxMonitorCmd), Error> {
-    //     info!(
-    //         "{}: [init_event_mointor] >> websocket addr: {:?}",
-    //         self.config.websocket_addr.clone()
-    //     );
-    //     todo!()
-    // }
 
     fn shutdown(self) -> Result<(), Error> {
         Ok(())
@@ -386,38 +368,7 @@ impl ChainEndpoint for NearChain {
 
     fn get_signer(&self) -> Result<Signer, Error> {
         trace!("In near: [get signer]");
-        // crate::time!("get_signer");
-        // // Todo: get Near Signer //CS
-        // /// Public key type for Runtime
-        // pub type PublicFor<P> = <P as Pair>::Public;
-        //
-        // /// formats public key as accountId as hex
-        // fn format_account_id<P: Pair>(public_key: PublicFor<P>) -> String
-        // where
-        //     PublicFor<P>: Into<MultiSigner>,
-        // {
-        //     format!(
-        //         "0x{}",
-        //         HexDisplay::from(&public_key.into().into_account().as_ref())
-        //     )
-        // }
-        //
-        // // Get the key from key seed file
-        // let key = self
-        //     .keybase()
-        //     .get_key(&self.config.key_name)
-        //     .map_err(|e| Error::key_not_found(self.config.key_name.clone(), e))?;
-        //
-        // let private_seed = key.private_key.private_key;
-        //
-        // let pair = sr25519::Pair::from_seed_slice(private_seed.as_ref())
-        // .map_err(|e| Error::report_error(format!("{:?}", e)))?;
-        // let public_key = pair.public();
-        //
-        // let account_id = format_account_id::<sr25519::Pair>(public_key);
-        //
-        // Ok(Signer::from_str(&account_id).unwrap())
-        Ok(Signer::from_str("xsb").unwrap())
+        Ok(Signer::from_str(SIGNER_ACCOUNT_TESTNET).unwrap())
     }
 
     // versioning
@@ -596,7 +547,7 @@ impl ChainEndpoint for NearChain {
 
         let latest_height = self
             .get_latest_height()
-            .map_err(|_| Error::report_error("get_latest_height".to_string()))?;
+            .map_err(|e| Error::report_error(format!("{}", e)))?;
 
         Ok(ChainStatus {
             height: latest_height,
@@ -680,6 +631,11 @@ impl ChainEndpoint for NearChain {
         let result = self
             .get_client_consensus(&client_id, &consensus_height)
             .map_err(|_| Error::report_error("query_client_consensus".to_string()))?;
+        
+        if result.len() == 0 {
+            return Err(Error::report_error("query_client_consensus".to_string()));
+        }
+
         let consensus_state = AnyConsensusState::decode_vec(&result).unwrap();
 
         match include_proof {
@@ -1663,14 +1619,41 @@ impl ChainEndpoint for NearChain {
     }
 
     fn subscribe(&mut self) -> std::result::Result<Subscription, Error> {
-        todo!()
+        info!("subscribing to events...");
+        let tx_monitor_cmd = match &self.tx_monitor_cmd {
+            Some(tx_monitor_cmd) => tx_monitor_cmd,
+            None => {
+                let tx_monitor_cmd = self.init_event_monitor()?;
+                self.tx_monitor_cmd = Some(tx_monitor_cmd);
+                self.tx_monitor_cmd.as_ref().unwrap()
+            }
+        };
+
+        let subscription = tx_monitor_cmd.subscribe().map_err(Error::event_monitor)?;
+        Ok(subscription)
     }
 
     fn query_consensus_state_heights(
         &self,
         request: QueryConsensusStateHeightsRequest,
     ) -> std::result::Result<Vec<Height>, Error> {
-        todo!()
+        info!(
+            "{}: [query_consensus_state_heights] - request: {:?} ",
+            self.id(),
+            request,
+        );
+
+        let result = self
+            .get_client_consensus_heights(&request.client_id)
+            .map_err(|_| Error::report_error("query_consensus_state_heights".to_string()))?;
+
+        info!(
+            "{}: [query_consensus_state_heights] - result: {:?} ",
+            self.id(),
+            result,
+        );
+
+        Ok(result)
     }
 
     fn cross_chain_query(
@@ -1681,7 +1664,27 @@ impl ChainEndpoint for NearChain {
     }
 }
 
-fn collect_ibc_event_by_outcome(outcome: FinalExecutionOutcomeView) -> Vec<IbcEventWithHeight> {
+impl NearChain {
+    fn init_event_monitor(
+        &self,
+    ) -> Result<TxMonitorCmd, Error> {
+        info!("initializing event monitor");
+        crate::time!("init_event_monitor");
+
+        let (mut event_monitor, monitor_tx) = NearEventMonitor::new(
+            self.config.id.clone(),
+            self.config.rpc_addr.to_string(),
+            self.rt.clone(),
+        )
+        .map_err(Error::event_monitor)?;
+
+        thread::spawn(move || event_monitor.run());
+
+        Ok(monitor_tx)
+    }
+}
+
+pub fn collect_ibc_event_by_outcome(outcome: FinalExecutionOutcomeView) -> Vec<IbcEventWithHeight> {
     let mut ibc_events = vec![];
     for receipt_outcome in outcome.receipts_outcome {
         for log in receipt_outcome.outcome.logs {

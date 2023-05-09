@@ -8,6 +8,7 @@ use crate::chain::requests::{
 use crate::client_state::{AnyClientState, IdentifiedAnyClientState};
 use crate::consensus_state::AnyConsensusState;
 use alloc::sync::Arc;
+use humantime_serde::re;
 use ibc_proto::google::protobuf::Any;
 use ibc_proto::ibc::core::channel::v1::PacketState;
 use ibc_relayer_types::core::ics02_client::height::Height;
@@ -28,12 +29,6 @@ use std::time::Duration;
 use tokio::runtime::Runtime as TokioRuntime;
 use tracing::{debug, info};
 
-#[derive(Deserialize, Serialize, Clone, Debug)]
-struct JsonHeight {
-    pub revision_number: String,
-    pub revision_height: String,
-}
-
 pub trait NearIbcContract {
     fn get_contract_id(&self) -> AccountId;
     fn get_client(&self) -> &NearRpcClient;
@@ -42,7 +37,7 @@ pub trait NearIbcContract {
     fn get_latest_height(&self) -> anyhow::Result<Height> {
         info!("NearIbcContract: [get_latest_height]");
 
-        let height: JsonHeight = self
+        let height: Height = self
             .get_rt()
             .block_on(self.get_client().view(
                 self.get_contract_id().clone(),
@@ -53,7 +48,7 @@ pub trait NearIbcContract {
             .json()?;
 
         // As we use solomachine client, we set the revision number to 0
-        Ok(Height::new(0, height.revision_height.parse()?)?)
+        Ok(Height::new(0, height.revision_height())?)
     }
 
     fn get_connection_end(
@@ -136,6 +131,25 @@ pub trait NearIbcContract {
             .json()
     }
 
+    fn get_client_consensus_heights(&self, client_id: &ClientId) -> anyhow::Result<Vec<Height>> {
+        info!(
+            "NearIbcContract: [get_client_consensus_heights] - client_id: {:?}",
+            client_id,
+        );
+        self.get_rt()
+            .block_on(
+                self.get_client().view(
+                    self.get_contract_id().clone(),
+                    "get_client_consensus_heights".to_string(),
+                    json!({"client_id": client_id.clone()})
+                        .to_string()
+                        .into_bytes(),
+                ),
+            )
+            .expect("Failed to get_client_consensus_heights.")
+            .json()
+    }
+
     /// Performs a query to retrieve the consensus state for a specified height
     /// `consensus_height` that the specified light client stores.
     fn get_client_consensus(
@@ -147,18 +161,12 @@ pub trait NearIbcContract {
             "NearIbcContract: [get_client_consensus] - client_id: {:?} consensus_height: {:?}",
             client_id, consensus_height
         );
-        // let client_id = serde_json::to_string(client_id).unwrap();
-        let height = JsonHeight {
-            revision_number: consensus_height.revision_number().to_string(),
-            revision_height: consensus_height.revision_height().to_string(),
-        };
-
         self.get_rt()
             .block_on(
                 self.get_client().view(
                     self.get_contract_id().clone(),
                     "get_client_consensus".to_string(),
-                    json!({"client_id": client_id.clone(), "consensus_height": height })
+                    json!({"client_id": client_id.clone(), "consensus_height": consensus_height })
                         .to_string()
                         .into_bytes(),
                 ),
