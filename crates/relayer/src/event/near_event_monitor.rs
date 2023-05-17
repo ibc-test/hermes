@@ -12,7 +12,7 @@ use crate::{
         handle::Subscription,
         near::{
             collect_ibc_event_by_outcome, contract::NearIbcContract, rpc::client::NearRpcClient,
-            CONTRACT_ACCOUNT_ID,
+            CONTRACT_ACCOUNT_ID, SIGNER_ACCOUNT_TESTNET,
         },
         tracking::TrackingId,
     },
@@ -35,7 +35,7 @@ use tokio::{
     task::JoinHandle,
     {runtime::Runtime as TokioRuntime, sync::mpsc},
 };
-use tracing::{debug, error, info, instrument, trace};
+use tracing::{debug, error, info, instrument, log::warn, trace};
 
 use super::{bus::EventBus, monitor::Error, monitor::EventBatch, IbcEventWithHeight};
 
@@ -108,6 +108,8 @@ pub struct NearEventMonitor {
     rt: Arc<TokioRuntime>,
     /// The latest height while waiting for ibc events
     waiting_on_height: Option<Height>,
+    /// The account id that used by relayer to sign transactions on NEAR protocol
+    signer_account_id: near_account_id::AccountId,
 }
 
 impl NearIbcContract for NearEventMonitor {
@@ -135,6 +137,7 @@ impl NearEventMonitor {
     pub fn new(
         chain_id: ChainId,
         rpc_addr: String,
+        signer_account_id: &str,
         rt: Arc<TokioRuntime>,
     ) -> Result<(Self, TxMonitorCmd)> {
         let (tx_cmd, rx_cmd) = channel::unbounded();
@@ -148,6 +151,7 @@ impl NearEventMonitor {
             event_tx: None,
             rx_cmd,
             waiting_on_height: None,
+            signer_account_id: near_account_id::AccountId::from_str(signer_account_id).unwrap(),
         };
 
         Ok((monitor, TxMonitorCmd(tx_cmd)))
@@ -225,36 +229,42 @@ impl NearEventMonitor {
     }
 
     fn query_events_at_height(&self, height: &Height) -> Result<EventBatch> {
-        let state_changes = self
-            .get_rt()
-            .block_on(self.client.get_state_changes_of(
-                self.get_contract_id(),
-                Some(BlockId::Height(height.revision_height())),
-            ))
-            .expect("Failed to get state changes");
-        let mut ibc_events = vec![];
-        for state_change in state_changes {
-            match state_change.cause {
-                StateChangeCauseView::TransactionProcessing { tx_hash } => {
-                    let final_execution_outcome_view = self
-                        .get_rt()
-                        .block_on(self.client.view_tx(TransactionInfo::TransactionId {
-                            hash: tx_hash,
-                            account_id: self.get_contract_id(),
-                        }))
-                        .expect("Failed to get transaction info");
-                    ibc_events.extend(
-                        collect_ibc_event_by_outcome(final_execution_outcome_view).drain(..),
-                    );
+        if let Ok(state_changes) = self.get_rt().block_on(self.client.get_state_changes_of(
+            self.get_contract_id(),
+            Some(BlockId::Height(height.revision_height())),
+        )) {
+            let mut ibc_events = vec![];
+            for state_change in state_changes {
+                match state_change.cause {
+                    StateChangeCauseView::TransactionProcessing { tx_hash } => {
+                        let final_execution_outcome_view = self
+                            .get_rt()
+                            .block_on(self.client.view_tx(TransactionInfo::TransactionId {
+                                hash: tx_hash,
+                                account_id: self.signer_account_id.clone(),
+                            }))
+                            .expect("Failed to get transaction info");
+                        ibc_events.extend(
+                            collect_ibc_event_by_outcome(final_execution_outcome_view).drain(..),
+                        );
+                    }
+                    _ => (),
                 }
-                _ => (),
             }
+            Ok(EventBatch {
+                height: height.clone(),
+                events: ibc_events,
+                chain_id: self.chain_id.clone(),
+                tracking_id: TrackingId::new_uuid(),
+            })
+        } else {
+            warn!("Failed to get state changes at height {}, skip it.", height);
+            Ok(EventBatch {
+                height: height.clone(),
+                events: vec![],
+                chain_id: self.chain_id.clone(),
+                tracking_id: TrackingId::new_uuid(),
+            })
         }
-        Ok(EventBatch {
-            height: height.clone(),
-            events: ibc_events,
-            chain_id: self.chain_id.clone(),
-            tracking_id: TrackingId::new_uuid(),
-        })
     }
 }

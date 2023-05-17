@@ -93,7 +93,7 @@ use ibc_relayer_types::{
     events::IbcEvent,
     proofs::{ConsensusProof, Proofs},
     signer::Signer,
-    Height, Height as ICSHeight,
+    Height, Height as ICSHeight, timestamp::Timestamp,
 };
 use near_account_id::AccountId;
 use near_crypto::{InMemorySigner, KeyType};
@@ -127,7 +127,7 @@ pub const REVISION_NUMBER: u64 = 0;
 pub const CLIENT_DIVERSIFIER: &str = "NEAR";
 pub const CONTRACT_ACCOUNT_ID: &str = "v2.nearibc.testnet";
 pub const SIGNER_ACCOUNT_TESTNET: &str = "my-account.testnet";
-const MINIMUM_ATTACHED_NEAR_FOR_DELEVER_MSG: u128 = 10_000_000_000_000_000_000_000;
+const MINIMUM_ATTACHED_NEAR_FOR_DELEVER_MSG: u128 = 100_000_000_000_000_000_000_000;
 
 /// A struct used to start a Near chain instance in relayer
 #[derive(Debug)]
@@ -551,7 +551,7 @@ impl ChainEndpoint for NearChain {
 
         Ok(ChainStatus {
             height: latest_height,
-            timestamp: Default::default(),
+            timestamp: Timestamp::now(),
         })
     }
 
@@ -1674,6 +1674,7 @@ impl NearChain {
         let (mut event_monitor, monitor_tx) = NearEventMonitor::new(
             self.config.id.clone(),
             self.config.rpc_addr.to_string(),
+            SIGNER_ACCOUNT_TESTNET,
             self.rt.clone(),
         )
         .map_err(Error::event_monitor)?;

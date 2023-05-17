@@ -108,14 +108,12 @@ pub trait NearIbcContract {
             .json()
     }
 
-    // TODO(bob) need add query height
     /// get client_state by client_id
     fn get_client_state(&self, client_id: &ClientId) -> anyhow::Result<Vec<u8>> {
         info!(
             "NearIbcContract: [get_client_state] - client_id: {:?}",
             client_id
         );
-        // let client_id = client_id.to_string();
 
         self.get_rt()
             .block_on(
@@ -205,9 +203,6 @@ pub trait NearIbcContract {
             "NearIbcContract: [get_unreceipt_packet] - port_id: {:?} channel_id: {:?} sequence: {:?}",
             port_id, channel_id, sequences
         );
-        let port_id = serde_json::to_string(port_id).unwrap();
-        let channel_id = serde_json::to_string(channel_id).unwrap();
-        let sequences = serde_json::to_string(sequences).unwrap();
 
         self.get_rt()
             .block_on(
@@ -378,7 +373,6 @@ pub trait NearIbcContract {
     /// This function handles most of the IBC reqeusts to Near, except the MMR root update
     fn deliver(&self, messages: Vec<Any>) -> anyhow::Result<FinalExecutionOutcomeView> {
         info!("NearIbcContract: [deliver] - messages: {:?}", messages);
-        let msg = serde_json::to_string(&messages).unwrap();
 
         let signer = InMemorySigner::from_random("bob.testnet".parse().unwrap(), KeyType::ED25519);
         self.get_rt().block_on(self.get_client().call(
@@ -393,14 +387,13 @@ pub trait NearIbcContract {
 
     fn raw_transfer(&self, msgs: Vec<Any>) -> anyhow::Result<FinalExecutionOutcomeView> {
         info!("NearIbcContract: [raw_transfer] - msgs: {:?}", msgs);
-        let msg = serde_json::to_string(&msgs).unwrap();
 
         let signer = InMemorySigner::from_random("bob.testnet".parse().unwrap(), KeyType::ED25519);
         self.get_rt().block_on(self.get_client().call(
             &signer,
             &self.get_contract_id(),
             "raw_transfer".to_string(),
-            json!({ "messages": msg }).to_string().into_bytes(),
+            json!({ "messages": msgs }).to_string().into_bytes(),
             300000000000000,
             1,
         ))
@@ -416,9 +409,7 @@ pub trait NearIbcContract {
             "NearIbcContract: [get_packet_commitment] - port_id: {:?}, channel_id: {:?}, sequence: {:?}",
             port_id, channel_id, sequence
         );
-        let port_id = serde_json::to_string(port_id).unwrap();
-        let channel_id = serde_json::to_string(channel_id).unwrap();
-        let sequence = serde_json::to_string(sequence).unwrap();
+
         self.get_rt()
             .block_on(
                 self.get_client().view(
@@ -456,27 +447,25 @@ pub trait NearIbcContract {
         sequence: &Sequence,
     ) -> anyhow::Result<Vec<u8>> {
         info!(
-            "NearIbcContract: [query_packet_receipt] - port_id: {:?}, channel_id: {:?}, sequence: {:?}",
+            "NearIbcContract: [get_packet_receipt] - port_id: {:?}, channel_id: {:?}, sequence: {:?}",
             port_id, channel_id, sequence
         );
-        let port_id = serde_json::to_string(port_id).unwrap();
-        let channel_id = serde_json::to_string(channel_id).unwrap();
-        let sequence = serde_json::to_string(sequence).unwrap();
+
         self.get_rt()
             .block_on(
                 self.get_client().view(
                     self.get_contract_id().clone(),
-                    "query_packet_receipt".to_string(),
+                    "get_packet_receipt".to_string(),
                     json!({
                         "port_id": port_id,
                         "channel_id": channel_id,
-                       "sequence": sequence
+                        "sequence": sequence
                     })
                     .to_string()
                     .into_bytes(),
                 ),
             )
-            .expect("Failed to query_packet_receipt.")
+            .expect("Failed to get_packet_receipt.")
             .json()
     }
 
@@ -489,8 +478,7 @@ pub trait NearIbcContract {
             "NearIbcContract: [get_next_sequence_receive] - port_id: {:?}, channel_id: {:?}",
             port_id, channel_id,
         );
-        let port_id = serde_json::to_string(port_id).unwrap();
-        let channel_id = serde_json::to_string(channel_id).unwrap();
+
         self.get_rt()
             .block_on(
                 self.get_client().view(
@@ -518,9 +506,7 @@ pub trait NearIbcContract {
             "NearIbcContract: [get_packet_acknowledgement] - port_id: {:?}, channel_id: {:?}, sequence: {:?}",
             port_id, channel_id, sequence
         );
-        let port_id = serde_json::to_string(port_id).unwrap();
-        let channel_id = serde_json::to_string(channel_id).unwrap();
-        let sequence = serde_json::to_string(sequence).unwrap();
+
         self.get_rt()
             .block_on(
                 self.get_client().view(
@@ -539,57 +525,6 @@ pub trait NearIbcContract {
             .json()
     }
 }
-
-// #[derive(Debug)]
-// pub struct NearIbcContractInteractor<'s> {
-//     pub account_id: AccountId,
-//     pub client: &'s NearRpcClient,
-// }
-//
-// impl<'s> NearIbcContractInteractor<'s>  {
-//
-//     pub async fn query_connection_end(
-//         &self,
-//         connection_id: ConnectionId
-//     )->anyhow::Result<ConnectionEnd>{
-//         let connection_id =  connection_id.to_string();
-//         self.client.view(
-//             self.account_id.clone(),
-//             "query_connection_end".to_string(),
-//                 json!({"connection_id": connection_id }).to_string().into_bytes()
-//         ).await.and_then(|e|e.json())
-//     }
-//
-//
-//     pub async fn query_channel_end(&self, port_id: PortId, channel_id: ChannelId)-> anyhow::Result<ChannelEnd>{
-//         let port_id = serde_json::to_string(&port_id).unwrap();
-//         let channel_id = serde_json::to_string(&channel_id).unwrap();
-//         self.client.view(
-//             self.account_id.clone(),
-//             "query_channel_end".to_string(),
-//             json!({"port_id": port_id,"channel_id": channel_id}).to_string().into_bytes()
-//         ).await.and_then(|e|e.json())
-//     }
-//
-//     pub async fn query_client_state(&self, client_id: ClientId)-> anyhow::Result<AnyClientState>{
-//         let client_id = serde_json::to_string(&client_id).unwrap();
-//         self.client.view(
-//             self.account_id.clone(),
-//             "query_client_state".to_string(),
-//             json!({"client_id": client_id}).to_string().into_bytes()
-//         ).await.and_then(|e|e.json())
-//     }
-//
-//     pub async fn query_client_consensus(&self, client_id: ClientId, consensus_height: Height)->anyhow::Result<AnyConsensusState>{
-//         let client_id = serde_json::to_string(&client_id).unwrap();
-//         self.client.view(
-//             self.account_id.clone(),
-//             "query_client_state".to_string(),
-//             json!({"client_id": client_id}).to_string().into_bytes()
-//         ).await.and_then(|e|e.json())
-//     }
-//
-// }
 
 #[tokio::test]
 pub async fn test123() -> anyhow::Result<()> {
