@@ -1671,10 +1671,9 @@ impl NearChain {
         info!("initializing event monitor");
         crate::time!("init_event_monitor");
 
-        let (mut event_monitor, monitor_tx) = NearEventMonitor::new(
+        let (event_monitor, monitor_tx) = NearEventMonitor::new(
             self.config.id.clone(),
             self.config.rpc_addr.to_string(),
-            SIGNER_ACCOUNT_TESTNET,
             self.rt.clone(),
         )
         .map_err(Error::event_monitor)?;
@@ -1704,7 +1703,7 @@ pub fn collect_ibc_event_by_outcome(outcome: FinalExecutionOutcomeView) -> Vec<I
                     )
                     .expect("Failed to parse block_height field.");
                     ibc_events.push(IbcEventWithHeight {
-                        event: convert_ibc_event_to_hermes_ibc_event(ibc_event),
+                        event: convert_ibc_event_to_hermes_ibc_event(&ibc_event),
                         height: Height::new(0, block_height).unwrap(),
                     })
                 }

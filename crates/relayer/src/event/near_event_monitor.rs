@@ -1,60 +1,24 @@
+use super::{monitor::Error, monitor::EventBatch, IbcEventWithHeight};
+use crate::chain::{
+    handle::Subscription,
+    near::{
+        contract::NearIbcContract,
+        rpc::{client::NearRpcClient, tool::convert_ibc_event_to_hermes_ibc_event},
+        CONTRACT_ACCOUNT_ID,
+    },
+    tracking::TrackingId,
+};
 use alloc::sync::Arc;
-use core::cmp::Ordering;
-use near_jsonrpc_primitives::types::transactions::TransactionInfo;
-use near_primitives::{
-    types::{BlockId, StateChangeCause},
-    views::StateChangeCauseView,
-};
-use std::str::FromStr;
-
-use crate::{
-    chain::{
-        handle::Subscription,
-        near::{
-            collect_ibc_event_by_outcome, contract::NearIbcContract, rpc::client::NearRpcClient,
-            CONTRACT_ACCOUNT_ID, SIGNER_ACCOUNT_TESTNET,
-        },
-        tracking::TrackingId,
-    },
-    telemetry,
-    util::{
-        retry::{retry_with_index, RetryResult},
-        stream::try_group_while,
-    },
-};
 use crossbeam_channel as channel;
-use futures::{
-    pin_mut,
-    stream::{self, select_all, StreamExt},
-    Stream, TryStreamExt,
-};
 use ibc_relayer_types::{
-    core::ics02_client::height::Height, core::ics24_host::identifier::ChainId, events::IbcEvent,
+    core::ics02_client::height::Height, core::ics24_host::identifier::ChainId,
 };
-use tokio::{
-    task::JoinHandle,
-    {runtime::Runtime as TokioRuntime, sync::mpsc},
-};
-use tracing::{debug, error, info, instrument, log::warn, trace};
-
-use super::{bus::EventBus, monitor::Error, monitor::EventBatch, IbcEventWithHeight};
+use serde_json::json;
+use std::str::FromStr;
+use tokio::runtime::Runtime as TokioRuntime;
+use tracing::{error, info, instrument, log::warn};
 
 pub type Result<T> = core::result::Result<T, Error>;
-
-mod retry_strategy {
-    use crate::util::retry::clamp_total;
-    use core::time::Duration;
-    use retry::delay::Fibonacci;
-
-    // Default parameters for the retrying mechanism
-    const MAX_DELAY: Duration = Duration::from_secs(60); // 1 minute
-    const MAX_TOTAL_DELAY: Duration = Duration::from_secs(10 * 60); // 10 minutes
-    const INITIAL_DELAY: Duration = Duration::from_secs(1); // 1 second
-
-    pub fn default() -> impl Iterator<Item = Duration> {
-        clamp_total(Fibonacci::from(INITIAL_DELAY), MAX_DELAY, MAX_TOTAL_DELAY)
-    }
-}
 
 #[derive(Clone, Debug)]
 pub struct TxMonitorCmd(channel::Sender<MonitorCmd>);
@@ -106,10 +70,8 @@ pub struct NearEventMonitor {
     rx_cmd: channel::Receiver<MonitorCmd>,
     /// Tokio runtime
     rt: Arc<TokioRuntime>,
-    /// The latest height while waiting for ibc events
-    waiting_on_height: Option<Height>,
-    /// The account id that used by relayer to sign transactions on NEAR protocol
-    signer_account_id: near_account_id::AccountId,
+    /// The heights that have already been checked for IBC events.
+    checked_heights: Vec<u64>,
 }
 
 impl NearIbcContract for NearEventMonitor {
@@ -137,7 +99,6 @@ impl NearEventMonitor {
     pub fn new(
         chain_id: ChainId,
         rpc_addr: String,
-        signer_account_id: &str,
         rt: Arc<TokioRuntime>,
     ) -> Result<(Self, TxMonitorCmd)> {
         let (tx_cmd, rx_cmd) = channel::unbounded();
@@ -150,8 +111,7 @@ impl NearEventMonitor {
             client,
             event_tx: None,
             rx_cmd,
-            waiting_on_height: None,
-            signer_account_id: near_account_id::AccountId::from_str(signer_account_id).unwrap(),
+            checked_heights: vec![],
         };
 
         Ok((monitor, TxMonitorCmd(tx_cmd)))
@@ -187,12 +147,6 @@ impl NearEventMonitor {
                 match cmd {
                     MonitorCmd::Shutdown => return Next::Abort,
                     MonitorCmd::Subscribe(tx) => {
-                        match self.get_latest_height() {
-                            Ok(height) => {
-                                self.waiting_on_height = Some(height);
-                            }
-                            Err(e) => error!("Failed to get the latest height: {}", e),
-                        };
                         let (event_tx, event_rx) = crossbeam_channel::unbounded();
                         self.event_tx = Some(event_tx);
                         if let Err(e) = tx.send(event_rx) {
@@ -201,70 +155,82 @@ impl NearEventMonitor {
                     }
                 }
             }
-            if let Some(height) = &self.waiting_on_height {
-                info!("querying ibc events");
-                let event_tx = self.event_tx.as_ref().unwrap();
-                match self.query_events_at_height(height) {
-                    Ok(batch) => {
-                        if batch.events.len() > 0 {
-                            if let Err(e) = event_tx.send(Arc::new(Ok(batch))) {
-                                error!("failed to send event batch: {}", e);
+            if self.event_tx.is_some() {
+                let heights = self.get_ibc_events_heights();
+                let unchecked_heights = heights
+                    .iter()
+                    .filter(|h| !self.checked_heights.contains(h))
+                    .map(|h| *h)
+                    .collect::<Vec<u64>>();
+                if unchecked_heights.len() > 0 {
+                    let height = unchecked_heights[0];
+                    info!("querying ibc events at height: {}", height);
+                    let event_tx = self.event_tx.as_ref().unwrap();
+                    match self.query_events_at_height(&Height::new(0, height).unwrap()) {
+                        Ok(batch) => {
+                            if batch.events.len() > 0 {
+                                if let Err(e) = event_tx.send(Arc::new(Ok(batch))) {
+                                    error!("failed to send event batch: {}", e);
+                                }
                             }
-                            self.waiting_on_height = None;
-                            self.event_tx = None;
-                        } else {
-                            self.waiting_on_height = Some(height.increment());
+                        }
+                        Err(e) => {
+                            if let Err(e) = event_tx.send(Arc::new(Err(e))) {
+                                error!("failed to send error in fetching event batch: {}", e);
+                            }
                         }
                     }
-                    Err(e) => {
-                        if let Err(e) = event_tx.send(Arc::new(Err(e))) {
-                            error!("failed to send error in fetching event batch: {}", e);
-                        }
-                        self.waiting_on_height = None;
-                        self.event_tx = None;
-                    }
+                    self.checked_heights.push(height);
                 }
             }
         }
     }
 
+    fn get_ibc_events_heights(&self) -> Vec<u64> {
+        self.get_rt()
+            .block_on(self.get_client().view(
+                self.get_contract_id().clone(),
+                "get_ibc_events_heights".to_string(),
+                json!({}).to_string().into_bytes(),
+            ))
+            .map_or_else(|_| vec![], |result| result.json().unwrap())
+    }
+
     fn query_events_at_height(&self, height: &Height) -> Result<EventBatch> {
-        if let Ok(state_changes) = self.get_rt().block_on(self.client.get_state_changes_of(
-            self.get_contract_id(),
-            Some(BlockId::Height(height.revision_height())),
-        )) {
-            let mut ibc_events = vec![];
-            for state_change in state_changes {
-                match state_change.cause {
-                    StateChangeCauseView::TransactionProcessing { tx_hash } => {
-                        let final_execution_outcome_view = self
-                            .get_rt()
-                            .block_on(self.client.view_tx(TransactionInfo::TransactionId {
-                                hash: tx_hash,
-                                account_id: self.signer_account_id.clone(),
-                            }))
-                            .expect("Failed to get transaction info");
-                        ibc_events.extend(
-                            collect_ibc_event_by_outcome(final_execution_outcome_view).drain(..),
-                        );
-                    }
-                    _ => (),
-                }
-            }
-            Ok(EventBatch {
-                height: height.clone(),
-                events: ibc_events,
-                chain_id: self.chain_id.clone(),
-                tracking_id: TrackingId::new_uuid(),
-            })
-        } else {
-            warn!("Failed to get state changes at height {}, skip it.", height);
-            Ok(EventBatch {
-                height: height.clone(),
-                events: vec![],
-                chain_id: self.chain_id.clone(),
-                tracking_id: TrackingId::new_uuid(),
-            })
-        }
+        self.get_rt()
+            .block_on(
+                self.get_client().view(
+                    self.get_contract_id().clone(),
+                    "get_ibc_events_at".to_string(),
+                    json!({ "height": height.revision_height() })
+                        .to_string()
+                        .into_bytes(),
+                ),
+            )
+            .map_or_else(
+                |_| {
+                    Ok(EventBatch {
+                        height: height.clone(),
+                        events: vec![],
+                        chain_id: self.chain_id.clone(),
+                        tracking_id: TrackingId::new_uuid(),
+                    })
+                },
+                |result| {
+                    let ibc_events: Vec<ibc::events::IbcEvent> = result.json().unwrap();
+                    Ok(EventBatch {
+                        height: height.clone(),
+                        events: ibc_events
+                            .iter()
+                            .map(|event| IbcEventWithHeight {
+                                height: height.clone(),
+                                event: convert_ibc_event_to_hermes_ibc_event(event),
+                            })
+                            .collect(),
+                        chain_id: self.chain_id.clone(),
+                        tracking_id: TrackingId::new_uuid(),
+                    })
+                },
+            )
     }
 }

@@ -22,7 +22,7 @@ pub(crate) fn into_state_map(
 }
 
 /// Convert IbcEvent define in ibc::events::IbcEvent to IbcEvent in crates/relayer-types/src/events.rs
-pub fn convert_ibc_event_to_hermes_ibc_event(ibc_event: IbcEvent) -> HermesIbcEvent {
+pub fn convert_ibc_event_to_hermes_ibc_event(ibc_event: &IbcEvent) -> HermesIbcEvent {
     match ibc_event {
         IbcEvent::CreateClient(create_client) => {
             use ibc_relayer_types::core::ics02_client::events::Attributes;
@@ -292,7 +292,7 @@ pub fn convert_ibc_event_to_hermes_ibc_event(ibc_event: IbcEvent) -> HermesIbcEv
         IbcEvent::AppModule(app_module) => {
             HermesIbcEvent::AppModule(
                 ibc_relayer_types::events::ModuleEvent {
-                    kind: app_module.kind,
+                    kind: app_module.kind.clone(),
                     module_name: ModuleId::from_str(app_module.module_name.borrow()).unwrap(),
                     attributes: app_module.attributes.iter().map(|attr| {
                         ModuleEventAttribute {
