@@ -126,7 +126,7 @@ impl NearEventMonitor {
         fields(chain = %self.chain_id)
     )]
     pub fn run(mut self) {
-        info!("starting event monitor");
+        info!("Starting event monitor for {}", self.chain_id);
 
         // Continuously run the event loop, so that when it aborts
         // because of WebSocket client restart, we pick up the work again.
@@ -137,12 +137,11 @@ impl NearEventMonitor {
             }
         }
 
-        info!("event monitor has successfully shut down");
+        info!("Event monitor for {} has successfully shut down.", self.chain_id);
     }
 
     fn run_loop(&mut self) -> Next {
         loop {
-            info!("checking monitor commands");
             if let Ok(cmd) = self.rx_cmd.try_recv() {
                 match cmd {
                     MonitorCmd::Shutdown => return Next::Abort,
@@ -169,6 +168,7 @@ impl NearEventMonitor {
                     match self.query_events_at_height(&Height::new(0, height).unwrap()) {
                         Ok(batch) => {
                             if batch.events.len() > 0 {
+                                info!("ibc events found at height {}: {:?}", height, batch);
                                 if let Err(e) = event_tx.send(Arc::new(Ok(batch))) {
                                     error!("failed to send event batch: {}", e);
                                 }

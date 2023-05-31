@@ -42,7 +42,7 @@ use crate::{
     denom::DenomTrace,
     error::Error,
     event::{monitor::EventBatch, near_event_monitor::TxMonitorCmd},
-    event::{IbcEventWithHeight, near_event_monitor::NearEventMonitor, monitor::EventReceiver},
+    event::{monitor::EventReceiver, near_event_monitor::NearEventMonitor, IbcEventWithHeight},
     keyring::{KeyRing, Secp256k1KeyPair, SigningKeyPair, Test},
     misbehaviour::MisbehaviourEvidence,
 };
@@ -93,7 +93,8 @@ use ibc_relayer_types::{
     events::IbcEvent,
     proofs::{ConsensusProof, Proofs},
     signer::Signer,
-    Height, Height as ICSHeight, timestamp::Timestamp,
+    timestamp::Timestamp,
+    Height, Height as ICSHeight,
 };
 use near_account_id::AccountId;
 use near_crypto::{InMemorySigner, KeyType};
@@ -205,7 +206,10 @@ impl NearChain {
         info!("{}: [deliver] - messages: {:?}", self.id(), messages);
 
         let mut home_dir = dirs::home_dir().expect("Impossible to get your home dir!");
-        home_dir.push(format!(".near-credentials/testnet/{}.json", self.get_signer().unwrap().as_ref()));
+        home_dir.push(format!(
+            ".near-credentials/testnet/{}.json",
+            self.get_signer().unwrap().as_ref()
+        ));
         let signer = InMemorySigner::from_file(home_dir.as_path()).unwrap();
 
         self.block_on(self.client.call(
@@ -631,7 +635,7 @@ impl ChainEndpoint for NearChain {
         let result = self
             .get_client_consensus(&client_id, &consensus_height)
             .map_err(|_| Error::report_error("query_client_consensus".to_string()))?;
-        
+
         if result.len() == 0 {
             return Err(Error::report_error("query_client_consensus".to_string()));
         }
@@ -1204,7 +1208,26 @@ impl ChainEndpoint for NearChain {
             self.id(),
             request
         );
-        todo!()
+        let mut request = request.clone();
+        request.height = request.height.map(|height| match height {
+            QueryHeight::Latest => QueryHeight::Latest,
+            QueryHeight::Specific(value) => QueryHeight::Specific(
+                Height::new(value.revision_number(), value.revision_height() + 10).unwrap(),
+            ),
+        });
+        let original_result = self
+            .get_packet_events(request)
+            .map_err(|_| Error::report_error("get_packet_events".to_string()))?;
+        let mut result: Vec<IbcEventWithHeight> = vec![];
+        for (height, ibc_events) in original_result {
+            ibc_events.iter().for_each(|ibc_event| {
+                result.push(IbcEventWithHeight {
+                    event: convert_ibc_event_to_hermes_ibc_event(&ibc_event),
+                    height,
+                })
+            });
+        }
+        Ok(result)
     }
 
     fn query_host_consensus_state(
@@ -1665,9 +1688,7 @@ impl ChainEndpoint for NearChain {
 }
 
 impl NearChain {
-    fn init_event_monitor(
-        &self,
-    ) -> Result<TxMonitorCmd, Error> {
+    fn init_event_monitor(&self) -> Result<TxMonitorCmd, Error> {
         info!("initializing event monitor");
         crate::time!("init_event_monitor");
 

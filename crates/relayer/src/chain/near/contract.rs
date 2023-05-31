@@ -1,14 +1,16 @@
 use crate::chain::near::rpc::client::NearRpcClient;
 use crate::chain::near::CONTRACT_ACCOUNT_ID;
-use crate::chain::requests::{QueryChannelsRequest, QueryPacketAcknowledgementsRequest};
+use crate::chain::requests::{QueryChannelsRequest, QueryPacketAcknowledgementsRequest, QueryPacketEventDataRequest};
 use crate::chain::requests::{
     QueryClientConnectionsRequest, QueryClientStatesRequest, QueryConnectionsRequest,
     QueryPacketCommitmentsRequest, QueryUnreceivedAcksRequest,
 };
 use crate::client_state::{AnyClientState, IdentifiedAnyClientState};
 use crate::consensus_state::AnyConsensusState;
+use crate::event::IbcEventWithHeight;
 use alloc::sync::Arc;
 use humantime_serde::re;
+use ibc::events::IbcEvent;
 use ibc_proto::google::protobuf::Any;
 use ibc_proto::ibc::core::channel::v1::PacketState;
 use ibc_relayer_types::core::ics02_client::height::Height;
@@ -523,6 +525,22 @@ pub trait NearIbcContract {
             )
             .expect("Failed to get_packet_acknowledgement.")
             .json()
+    }
+
+    fn get_packet_events(
+        &self,
+        request: QueryPacketEventDataRequest,
+    ) -> anyhow::Result<Vec<(Height, Vec<IbcEvent>)>> {
+        info!("NearIbcContract: [get_packet_events] - request: {:?}", request);
+
+        self.get_rt()
+            .block_on(self.get_client().view(
+                self.get_contract_id().clone(),
+                "get_packet_events".to_string(),
+                json!({ "request": request }).to_string().into_bytes(),
+            ))
+            .expect("Failed to get packet events.")
+            .json::<Vec<(Height, Vec<IbcEvent>)>>()
     }
 }
 
