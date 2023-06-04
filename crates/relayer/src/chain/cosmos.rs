@@ -31,7 +31,7 @@ use ibc_relayer_types::clients::ics07_tendermint::client_state::{
 };
 use ibc_relayer_types::clients::ics07_tendermint::consensus_state::ConsensusState as TmConsensusState;
 use ibc_relayer_types::clients::ics07_tendermint::header::Header as TmHeader;
-use ibc_relayer_types::core::ics02_client::client_type::ClientType;
+// use ibc_relayer_types::core::ics02_client::client_type::ClientType;
 use ibc_relayer_types::core::ics02_client::error::Error as ClientError;
 use ibc_relayer_types::core::ics02_client::events::UpdateClient;
 use ibc_relayer_types::core::ics03_connection::connection::{
@@ -45,7 +45,7 @@ use ibc_relayer_types::core::ics24_host::identifier::{
     ChainId, ChannelId, ClientId, ConnectionId, PortId,
 };
 use ibc_relayer_types::core::ics24_host::path::{
-    AcksPath, ChannelEndsPath, ClientConsensusStatePath, ClientStatePath, CommitmentsPath,
+    AcksPath, ChannelEndsPath, ClientStatePath, CommitmentsPath,
     ConnectionsPath, ReceiptsPath, SeqRecvsPath,
 };
 use ibc_relayer_types::core::ics24_host::{
@@ -106,6 +106,11 @@ use crate::misbehaviour::MisbehaviourEvidence;
 use crate::util::pretty::{
     PrettyIdentifiedChannel, PrettyIdentifiedClientState, PrettyIdentifiedConnection,
 };
+
+use ibc_relayer_types::clients::ics06_solomachine::consensus_state::{
+    ConsensusState as SmConsensusState, PublicKey,
+};
+use ibc_relayer_types::core::ics23_commitment::commitment::CommitmentRoot;
 
 pub mod batch;
 pub mod client;
@@ -1264,8 +1269,8 @@ impl ChainEndpoint for CosmosSdkChain {
 
     fn query_consensus_state(
         &self,
-        request: QueryConsensusStateRequest,
-        include_proof: IncludeProof,
+        _request: QueryConsensusStateRequest,
+        _include_proof: IncludeProof,
     ) -> Result<(AnyConsensusState, Option<MerkleProof>), Error> {
         crate::time!(
             "query_consensus_state",
@@ -1275,32 +1280,47 @@ impl ChainEndpoint for CosmosSdkChain {
         );
         crate::telemetry!(query, self.id(), "query_consensus_state");
 
-        let res = self.query(
-            ClientConsensusStatePath {
-                client_id: request.client_id.clone(),
-                epoch: request.consensus_height.revision_number(),
-                height: request.consensus_height.revision_height(),
-            },
-            request.query_height,
-            matches!(include_proof, IncludeProof::Yes),
-        )?;
+        // let res = self.query(
+        //     ClientConsensusStatePath {
+        //         client_id: request.client_id.clone(),
+        //         epoch: request.consensus_height.revision_number(),
+        //         height: request.consensus_height.revision_height(),
+        //     },
+        //     request.query_height,
+        //     matches!(include_proof, IncludeProof::Yes),
+        // )?;
 
-        let consensus_state = AnyConsensusState::decode_vec(&res.value).map_err(Error::decode)?;
+        // let consensus_state = AnyConsensusState::decode_vec(&res.value).map_err(Error::decode)?;
 
-        if !matches!(consensus_state, AnyConsensusState::Tendermint(_)) {
-            return Err(Error::consensus_state_type_mismatch(
-                ClientType::Tendermint,
-                consensus_state.client_type(),
-            ));
-        }
+        // if !matches!(consensus_state, AnyConsensusState::Tendermint(_)) {
+        //     return Err(Error::consensus_state_type_mismatch(
+        //         ClientType::Tendermint,
+        //         consensus_state.client_type(),
+        //     ));
+        // }
 
-        match include_proof {
-            IncludeProof::Yes => {
-                let proof = res.proof.ok_or_else(Error::empty_response_proof)?;
-                Ok((consensus_state, Some(proof)))
-            }
-            IncludeProof::No => Ok((consensus_state, None)),
-        }
+        // match include_proof {
+        //     IncludeProof::Yes => {
+        //         let proof = res.proof.ok_or_else(Error::empty_response_proof)?;
+        //         Ok((consensus_state, Some(proof)))
+        //     }
+        //     IncludeProof::No => Ok((consensus_state, None)),
+        // }
+        let pk = PublicKey(
+            tendermint::PublicKey::from_raw_secp256k1(&hex_literal::hex!(
+                "02c88aca653727db28e0ade87497c1f03b551143dedfd4db8de71689ad5e38421c"
+            ))
+            .unwrap(),
+        );
+
+        let sm_consensus_state = SmConsensusState {
+            public_key: pk.clone(),
+            diversifier: "oct".to_string(),
+            timestamp: 9999,
+            root: CommitmentRoot::from_bytes(&pk.to_bytes()),
+        };
+        let cs: AnyConsensusState = sm_consensus_state.try_into().unwrap();
+        Ok((cs, None))
     }
 
     fn query_client_connections(

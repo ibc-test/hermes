@@ -25,7 +25,7 @@ use ibc_relayer_types::{
         header::Header as TmHeader, misbehaviour::Misbehaviour as TmMisbehaviour,
     },
     core::{
-        ics02_client::{client_type::ClientType, events::UpdateClient, header::downcast_header},
+        ics02_client::{events::UpdateClient, header::downcast_header},
         ics24_host::identifier::ChainId,
     },
     downcast, Height as ICSHeight,
@@ -303,21 +303,29 @@ impl LightClient {
 
     fn prepare_client(
         &self,
-        client_state: &AnyClientState,
+        _client_state: &AnyClientState,
         now: Time,
     ) -> Result<TmLightClient, Error> {
+        use tendermint_light_client::types::TrustThreshold;
+        use tendermint_light_client::verifier::options::Options;
+
         let clock = components::clock::FixedClock::new(now);
         let verifier = ProdVerifier::default();
         let scheduler = components::scheduler::basic_bisecting_schedule;
 
-        let client_state =
-            downcast!(client_state => AnyClientState::Tendermint).ok_or_else(|| {
-                Error::client_type_mismatch(ClientType::Tendermint, client_state.client_type())
-            })?;
+        // let client_state =
+        //     downcast!(client_state => AnyClientState::Tendermint).ok_or_else(|| {
+        //         Error::client_type_mismatch(ClientType::Tendermint, client_state.client_type())
+        //     })?;
+        let options = Options {
+            trust_threshold: TrustThreshold::new(2, 3).unwrap(),
+            trusting_period: Duration::from_secs(1209600),
+            clock_drift: Duration::from_secs(40),
+        };
 
         Ok(TmLightClient::new(
             self.peer_id,
-            client_state.as_light_client_options(),
+            options,
             clock,
             scheduler,
             verifier,

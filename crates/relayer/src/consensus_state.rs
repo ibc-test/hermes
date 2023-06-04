@@ -21,11 +21,17 @@ use ibc_relayer_types::timestamp::Timestamp;
 use ibc_relayer_types::Height;
 use serde::{Deserialize, Serialize};
 
+use ibc_proto::ibc::lightclients::solomachine::v2::ConsensusState as RawSmConsensusState;
+use ibc_relayer_types::clients::ics06_solomachine::consensus_state::{
+    ConsensusState as SmConsensusState, SOLOMACHINE_CONSENSUS_STATE_TYPE_URL,
+};
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 #[non_exhaustive]
 pub enum AnyConsensusState {
     Tendermint(TmConsensusState),
+    Solomachine(SmConsensusState),
 
     #[cfg(test)]
     Mock(MockConsensusState),
@@ -35,6 +41,7 @@ impl AnyConsensusState {
     pub fn timestamp(&self) -> Timestamp {
         match self {
             Self::Tendermint(cs_state) => cs_state.timestamp.into(),
+            Self::Solomachine(cs_state) => Timestamp::from_nanoseconds(cs_state.timestamp).unwrap(),
 
             #[cfg(test)]
             Self::Mock(mock_state) => mock_state.timestamp(),
@@ -44,6 +51,7 @@ impl AnyConsensusState {
     pub fn client_type(&self) -> ClientType {
         match self {
             AnyConsensusState::Tendermint(_cs) => ClientType::Tendermint,
+            AnyConsensusState::Solomachine(_cs) => ClientType::Solomachine,
 
             #[cfg(test)]
             AnyConsensusState::Mock(_cs) => ClientType::Mock,
@@ -65,6 +73,11 @@ impl TryFrom<Any> for AnyConsensusState {
                     .map_err(Error::decode_raw_client_state)?,
             )),
 
+            SOLOMACHINE_CONSENSUS_STATE_TYPE_URL => Ok(AnyConsensusState::Solomachine(
+                Protobuf::<RawSmConsensusState>::decode_vec(&value.value)
+                    .map_err(Error::decode_raw_client_state)?,
+            )),
+
             #[cfg(test)]
             MOCK_CONSENSUS_STATE_TYPE_URL => Ok(AnyConsensusState::Mock(
                 Protobuf::<RawMockConsensusState>::decode_vec(&value.value)
@@ -82,6 +95,10 @@ impl From<AnyConsensusState> for Any {
             AnyConsensusState::Tendermint(value) => Any {
                 type_url: TENDERMINT_CONSENSUS_STATE_TYPE_URL.to_string(),
                 value: Protobuf::<RawConsensusState>::encode_vec(&value),
+            },
+            AnyConsensusState::Solomachine(value) => Any {
+                type_url: SOLOMACHINE_CONSENSUS_STATE_TYPE_URL.to_string(),
+                value: Protobuf::<RawSmConsensusState>::encode_vec(&value),
             },
             #[cfg(test)]
             AnyConsensusState::Mock(value) => Any {
@@ -105,10 +122,20 @@ impl From<TmConsensusState> for AnyConsensusState {
     }
 }
 
+impl From<SmConsensusState> for AnyConsensusState {
+    fn from(cs: SmConsensusState) -> Self {
+        Self::Solomachine(cs)
+    }
+}
+
 impl From<&dyn ConsensusState> for AnyConsensusState {
     fn from(cs: &dyn ConsensusState) -> Self {
         #[cfg(test)]
         if let Some(cs) = downcast_consensus_state::<MockConsensusState>(cs) {
+            return AnyConsensusState::from(cs.clone());
+        }
+
+        if let Some(cs) = downcast_consensus_state::<SmConsensusState>(cs) {
             return AnyConsensusState::from(cs.clone());
         }
 
@@ -165,6 +192,7 @@ impl ConsensusState for AnyConsensusState {
     fn root(&self) -> &CommitmentRoot {
         match self {
             Self::Tendermint(cs_state) => cs_state.root(),
+            Self::Solomachine(cs_state) => cs_state.root(),
 
             #[cfg(test)]
             Self::Mock(mock_state) => mock_state.root(),

@@ -45,6 +45,8 @@ itertools = { version = "0.10.3" }
 primitive-types = { version = "0.12.1", default-features = false, features = ["serde_no_std"] }
 dyn-clone = "1.0.8"
 num-rational = "0.4.1"
+eyre = "0.6"
+cosmos-sdk-proto = { version = "0.19", default-features = false }
 
 [dependencies.tendermint]
 version = "0.32.0"

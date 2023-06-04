@@ -22,6 +22,11 @@ use crate::client_state::AnyClientState;
 use crate::error;
 use crate::misbehaviour::MisbehaviourEvidence;
 
+use ibc_proto::ibc::lightclients::solomachine::v2::Header as RawSmHeader;
+use ibc_relayer_types::clients::ics06_solomachine::header::{
+    decode_header as sm_decode_header, Header as SolomachineHeader, SOLOMACHINE_HEADER_TYPE_URL,
+};
+
 /// Defines a light block from the point of view of the relayer.
 pub trait LightBlock<C: ChainEndpoint>: Send + Sync {
     fn signed_header(&self) -> &C::Header;
@@ -83,24 +88,28 @@ pub fn decode_header(header_bytes: &[u8]) -> Result<Box<dyn Header>, Error> {
 #[allow(clippy::large_enum_variant)]
 pub enum AnyHeader {
     Tendermint(TendermintHeader),
+    Solomachine(SolomachineHeader),
 }
 
 impl Header for AnyHeader {
     fn client_type(&self) -> ClientType {
         match self {
             Self::Tendermint(header) => header.client_type(),
+            Self::Solomachine(header) => header.client_type(),
         }
     }
 
     fn height(&self) -> Height {
         match self {
             Self::Tendermint(header) => header.height(),
+            Self::Solomachine(header) => header.height(),
         }
     }
 
     fn timestamp(&self) -> Timestamp {
         match self {
             Self::Tendermint(header) => header.timestamp(),
+            Self::Solomachine(header) => header.timestamp(),
         }
     }
 }
@@ -117,6 +126,11 @@ impl TryFrom<Any> for AnyHeader {
 
                 Ok(AnyHeader::Tendermint(val))
             }
+            SOLOMACHINE_HEADER_TYPE_URL => {
+                let val = sm_decode_header(raw.value.deref())?;
+
+                Ok(AnyHeader::Solomachine(val))
+            }
 
             _ => Err(Error::unknown_header_type(raw.type_url)),
         }
@@ -130,6 +144,10 @@ impl From<AnyHeader> for Any {
                 type_url: TENDERMINT_HEADER_TYPE_URL.to_string(),
                 value: ErasedProtobuf::<RawTmHeader>::encode_vec(&header),
             },
+            AnyHeader::Solomachine(header) => Any {
+                type_url: SOLOMACHINE_HEADER_TYPE_URL.to_string(),
+                value: ErasedProtobuf::<RawSmHeader>::encode_vec(&header),
+            },
         }
     }
 }
@@ -137,5 +155,11 @@ impl From<AnyHeader> for Any {
 impl From<TendermintHeader> for AnyHeader {
     fn from(header: TendermintHeader) -> Self {
         Self::Tendermint(header)
+    }
+}
+
+impl From<SolomachineHeader> for AnyHeader {
+    fn from(header: SolomachineHeader) -> Self {
+        Self::Solomachine(header)
     }
 }

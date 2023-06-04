@@ -16,7 +16,7 @@ members = [
 ]
 
 [patch.crates-io]
-# ibc-proto                        = { git = "https://github.com/cosmos/ibc-proto-rs.git",       branch = "main" }
+ibc-proto                        = { git = "https://github.com/octopus-network/ibc-proto-rs.git",       branch = "0.31.0-alpha.2-vp" }
 # tendermint                       = { git = "https://github.com/informalsystems/tendermint-rs.git", branch = "romac/new-misbehavior-detector" }
 # tendermint-rpc                   = { git = "https://github.com/informalsystems/tendermint-rs.git", branch = "romac/new-misbehavior-detector" }
 # tendermint-proto                 = { git = "https://github.com/informalsystems/tendermint-rs.git", branch = "romac/new-misbehavior-detector" }

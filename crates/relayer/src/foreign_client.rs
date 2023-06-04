@@ -9,6 +9,7 @@ use std::thread;
 use std::time::Instant;
 
 use ibc_proto::google::protobuf::Any;
+use ibc_relayer_types::core::ics23_commitment::commitment::CommitmentRoot;
 use itertools::Itertools;
 use tracing::{debug, error, info, instrument, trace, warn};
 
@@ -42,6 +43,17 @@ use crate::misbehaviour::MisbehaviourEvidence;
 use crate::telemetry;
 use crate::util::collate::CollatedIterExt;
 use crate::util::pretty::{PrettyDuration, PrettySlice};
+
+use ibc_proto::ibc::lightclients::solomachine::v2::{DataType, HeaderData};
+use ibc_relayer_types::clients::ics06_solomachine::client_state::ClientState as SmClientState;
+use ibc_relayer_types::clients::ics06_solomachine::consensus_state::{
+    ConsensusState as SmConsensusState, PublicKey,
+};
+use ibc_relayer_types::clients::ics06_solomachine::header::Header as SmHeader;
+use ibc_relayer_types::clients::ics07_tendermint::client_state::ClientState as TmClientState;
+use ibc_relayer_types::clients::ics07_tendermint::consensus_state::ConsensusState as TmConsensusState;
+use ibc_relayer_types::clients::ics07_tendermint::header::Header as TmHeader;
+use prost::Message;
 
 const MAX_MISBEHAVIOUR_CHECK_DURATION: Duration = Duration::from_secs(120);
 
@@ -634,7 +646,38 @@ impl<DstChain: ChainHandle, SrcChain: ChainHandle> ForeignClient<DstChain, SrcCh
         &self,
         options: CreateOptions,
     ) -> Result<IbcEventWithHeight, ForeignClientError> {
-        let new_msg = self.build_create_client(options)?;
+        let mut new_msg = self.build_create_client(options)?;
+        let client_state = TmClientState::try_from(new_msg.clone().client_state).unwrap();
+        println!("ys-debug: TmClientState: {:?}", client_state);
+        let consensus_state = TmConsensusState::try_from(new_msg.clone().consensus_state).unwrap();
+        println!("ys-debug: TmConsensusState: {:?}", consensus_state);
+
+        let pk = PublicKey(
+            tendermint::PublicKey::from_raw_secp256k1(&hex_literal::hex!(
+                "02c88aca653727db28e0ade87497c1f03b551143dedfd4db8de71689ad5e38421c"
+            ))
+            .unwrap(),
+        );
+
+        let sm_consensus_state = SmConsensusState {
+            public_key: pk.clone(),
+            diversifier: "oct".to_string(),
+            timestamp: consensus_state.timestamp.unix_timestamp_nanos() as u64,
+            root: CommitmentRoot::from_bytes(&pk.to_bytes()),
+        };
+
+        let sm_client_state = SmClientState {
+            sequence: 1, // sequence cannot be 0
+            is_frozen: false,
+            consensus_state: sm_consensus_state.clone(),
+            allow_update_after_proposal: if client_state.chain_id.version() == 0 {
+                false
+            } else {
+                true
+            },
+        };
+        new_msg.client_state = sm_client_state.into();
+        new_msg.consensus_state = sm_consensus_state.into();
 
         let res = self
             .dst_chain
@@ -1113,6 +1156,12 @@ impl<DstChain: ChainHandle, SrcChain: ChainHandle> ForeignClient<DstChain, SrcCh
     ) -> Result<Vec<MsgUpdateClient>, ForeignClientError> {
         // Get the latest client state on destination.
         let (client_state, _) = self.validated_client_state()?;
+        println!(
+            "ys-debug: target_height: {:?}, trusted_height: {:?}, latest: {:?}",
+            target_height,
+            maybe_trusted_height,
+            client_state.latest_height()
+        );
 
         let trusted_height = match maybe_trusted_height {
             Some(trusted_height) => {
@@ -1177,12 +1226,44 @@ impl<DstChain: ChainHandle, SrcChain: ChainHandle> ForeignClient<DstChain, SrcCh
         self.wait_for_header_validation_delay(&client_state, &header)?;
 
         let mut msgs = vec![];
+        let pk = PublicKey(
+            tendermint::PublicKey::from_raw_secp256k1(&hex_literal::hex!(
+                "02c88aca653727db28e0ade87497c1f03b551143dedfd4db8de71689ad5e38421c"
+            ))
+            .unwrap(),
+        );
+        let data = HeaderData {
+            new_pub_key: Some(pk.clone().into()),
+            new_diversifier: "oct".to_string(),
+        };
+        let mut buf = Vec::new();
+        Message::encode(&data, &mut buf).unwrap();
 
         for header in support {
             debug!(
                 "building a MsgUpdateAnyClient for intermediate height {}",
                 header.height(),
             );
+            let sequence = header.height().revision_height();
+            let timestamp = header.timestamp().nanoseconds();
+            let sig_data =
+                alice_sign_sign_bytes(sequence, timestamp, DataType::Header.into(), buf.to_vec());
+            let th = match header {
+                AnyHeader::Tendermint(header) => {
+                    let th: TmHeader = TmHeader::from(header);
+                    println!("ys-debug: TmHeader: {:?}", th);
+                    let sh = SmHeader {
+                        sequence: th.height().revision_height(),
+                        timestamp: th.timestamp().nanoseconds(),
+                        signature: sig_data,
+                        new_public_key: pk.clone().into(),
+                        new_diversifier: "oct".to_string(),
+                    };
+                    Some(sh)
+                }
+                _ => None,
+            };
+            let header: AnyHeader = th.unwrap().try_into().unwrap();
 
             msgs.push(MsgUpdateClient {
                 header: header.into(),
@@ -1196,6 +1277,26 @@ impl<DstChain: ChainHandle, SrcChain: ChainHandle> ForeignClient<DstChain, SrcCh
             trusted_height,
             header.height(),
         );
+        let sequence = header.height().revision_height();
+        let timestamp = header.timestamp().nanoseconds();
+        let sig_data =
+            alice_sign_sign_bytes(sequence, timestamp, DataType::Header.into(), buf.to_vec());
+        let th = match header {
+            AnyHeader::Tendermint(header) => {
+                let th: TmHeader = TmHeader::from(header);
+                println!("ys-debug: TmHeader: {:?}", th);
+                let sh = SmHeader {
+                    sequence: th.height().revision_height(),
+                    timestamp: th.timestamp().nanoseconds(),
+                    signature: sig_data,
+                    new_public_key: pk.clone().into(),
+                    new_diversifier: "oct".to_string(),
+                };
+                Some(sh)
+            }
+            _ => None,
+        };
+        let header: AnyHeader = th.unwrap().try_into().unwrap();
 
         msgs.push(MsgUpdateClient {
             header: header.into(),
@@ -1211,6 +1312,7 @@ impl<DstChain: ChainHandle, SrcChain: ChainHandle> ForeignClient<DstChain, SrcCh
             msgs.len() as u64
         );
 
+        let msgs = vec![];
         Ok(msgs)
     }
 
@@ -1786,4 +1888,54 @@ pub fn extract_client_id(event: &IbcEvent) -> Result<&ClientId, ForeignClientErr
             event.clone(),
         )),
     }
+}
+
+pub fn alice_sign_sign_bytes(
+    sequence: u64,
+    timestamp: u64,
+    data_type: i32,
+    data: Vec<u8>,
+) -> Vec<u8> {
+    use crate::config::AddressType;
+    use crate::keyring::{Secp256k1KeyPair, SigningKeyPair};
+    use core::str::FromStr;
+    use hdpath::StandardHDPath;
+    use ibc_proto::cosmos::tx::signing::v1beta1::signature_descriptor::{
+        data::{Single, Sum},
+        Data,
+    };
+    use ibc_proto::ibc::lightclients::solomachine::v2::SignBytes;
+
+    println!(
+        "ys-debug: sequence {:?}, timestamp: {:?}, data_type: {:?}, data: {:?}",
+        sequence, timestamp, data_type, data
+    );
+    let bytes = SignBytes {
+        sequence,
+        timestamp,
+        diversifier: "oct".to_string(),
+        data_type,
+        data,
+    };
+    let mut buf = Vec::new();
+    Message::encode(&bytes, &mut buf).unwrap();
+    println!("encoded_bytes: {:?}", buf);
+    let standard = StandardHDPath::from_str("m/44'/60'/0'/0/0").unwrap();
+
+    // m/44'/60'/0'/0/0
+    // 0xd73E35f53b8180b241E70C0e9040173dd8D0e2A0
+    // 0x02c88aca653727db28e0ade87497c1f03b551143dedfd4db8de71689ad5e38421c
+    // 0x281afd44d50ffd0bab6502cbb9bc58a7f9b53813c862db01836d46a27b51168c
+
+    let key_pair = Secp256k1KeyPair::from_mnemonic("captain walk infant web eye return ahead once face sunny usage devote cotton car old check symbol antique derive wire kid solve forest fish", &standard, &AddressType::Cosmos, "oct").unwrap();
+    let signature = key_pair.sign(&buf).unwrap();
+    println!("signature: {:?}", signature);
+    let sig = Data {
+        sum: Some(Sum::Single(Single { mode: 1, signature })),
+    };
+    buf = Vec::new();
+    Message::encode(&sig, &mut buf).unwrap();
+
+    println!("ys-debug: sig_data: {:?}", buf);
+    buf
 }

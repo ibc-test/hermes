@@ -356,7 +356,8 @@ fn relay_on_object<Chain: ChainHandle>(
                 object.short_name()
             );
 
-            false
+            // false
+            true
         }
         Err(e) if e.log_as_debug() => {
             debug!(
