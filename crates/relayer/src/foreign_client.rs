@@ -667,7 +667,11 @@ impl<DstChain: ChainHandle, SrcChain: ChainHandle> ForeignClient<DstChain, SrcCh
         };
 
         let sm_client_state = SmClientState {
-            sequence: 1, // sequence cannot be 0
+            sequence: if client_state.chain_id.version() == 0 {
+                1
+            } else {
+                10
+            }, // sequence cannot be 0
             is_frozen: false,
             consensus_state: sm_consensus_state.clone(),
             allow_update_after_proposal: if client_state.chain_id.version() == 0 {
@@ -1156,6 +1160,7 @@ impl<DstChain: ChainHandle, SrcChain: ChainHandle> ForeignClient<DstChain, SrcCh
     ) -> Result<Vec<MsgUpdateClient>, ForeignClientError> {
         // Get the latest client state on destination.
         let (client_state, _) = self.validated_client_state()?;
+        let trusted_height = target_height.decrement().unwrap();
         println!(
             "ys-debug: target_height: {:?}, trusted_height: {:?}, latest: {:?}",
             target_height,
@@ -1163,48 +1168,48 @@ impl<DstChain: ChainHandle, SrcChain: ChainHandle> ForeignClient<DstChain, SrcCh
             client_state.latest_height()
         );
 
-        let trusted_height = match maybe_trusted_height {
-            Some(trusted_height) => {
-                self.validate_trusted_height(trusted_height, &client_state)?;
-                trusted_height
-            }
-            None => self.solve_trusted_height(target_height, &client_state)?,
-        };
+        // let trusted_height = match maybe_trusted_height {
+        //     Some(trusted_height) => {
+        //         self.validate_trusted_height(trusted_height, &client_state)?;
+        //         trusted_height
+        //     }
+        //     None => self.solve_trusted_height(target_height, &client_state)?,
+        // };
 
-        if trusted_height != client_state.latest_height() {
-            // If we're using a trusted height that is different from the client latest height,
-            // then check if the consensus state at `trusted_height` is within trusting period
-            if let ConsensusStateTrusted::NotTrusted {
-                elapsed,
-                consensus_state_timestmap,
-                network_timestamp,
-            } = self.check_consensus_state_trusting_period(&client_state, &trusted_height)?
-            {
-                error!(
-                    %trusted_height,
-                    %network_timestamp,
-                    %consensus_state_timestmap,
-                    ?elapsed,
-                    "cannot build client update message because the provided trusted height is outside of trusting period!",
-                );
+        // if trusted_height != client_state.latest_height() {
+        //     // If we're using a trusted height that is different from the client latest height,
+        //     // then check if the consensus state at `trusted_height` is within trusting period
+        //     if let ConsensusStateTrusted::NotTrusted {
+        //         elapsed,
+        //         consensus_state_timestmap,
+        //         network_timestamp,
+        //     } = self.check_consensus_state_trusting_period(&client_state, &trusted_height)?
+        //     {
+        //         error!(
+        //             %trusted_height,
+        //             %network_timestamp,
+        //             %consensus_state_timestmap,
+        //             ?elapsed,
+        //             "cannot build client update message because the provided trusted height is outside of trusting period!",
+        //         );
 
-                return Err(ForeignClientError::consensus_state_not_trusted(
-                    trusted_height,
-                    elapsed,
-                ));
-            }
-        }
+        //         return Err(ForeignClientError::consensus_state_not_trusted(
+        //             trusted_height,
+        //             elapsed,
+        //         ));
+        //     }
+        // }
 
-        if trusted_height >= target_height {
-            warn!(
-                "skipping update: trusted height ({}) >= chain target height ({})",
-                trusted_height, target_height
-            );
+        // if trusted_height >= target_height {
+        //     warn!(
+        //         "skipping update: trusted height ({}) >= chain target height ({})",
+        //         trusted_height, target_height
+        //     );
 
-            return Ok(vec![]);
-        }
+        //     return Ok(vec![]);
+        // }
 
-        let (header, support) = self
+        let (header, _support) = self
             .src_chain()
             .build_header(trusted_height, target_height, client_state.clone())
             .map_err(|e| {
@@ -1239,55 +1244,55 @@ impl<DstChain: ChainHandle, SrcChain: ChainHandle> ForeignClient<DstChain, SrcCh
         let mut buf = Vec::new();
         Message::encode(&data, &mut buf).unwrap();
 
-        for header in support {
-            debug!(
-                "building a MsgUpdateAnyClient for intermediate height {}",
-                header.height(),
-            );
-            let sequence = header.height().revision_height();
-            let timestamp = header.timestamp().nanoseconds();
-            let sig_data =
-                alice_sign_sign_bytes(sequence, timestamp, DataType::Header.into(), buf.to_vec());
-            let th = match header {
-                AnyHeader::Tendermint(header) => {
-                    let th: TmHeader = TmHeader::from(header);
-                    println!("ys-debug: TmHeader: {:?}", th);
-                    let sh = SmHeader {
-                        sequence: th.height().revision_height(),
-                        timestamp: th.timestamp().nanoseconds(),
-                        signature: sig_data,
-                        new_public_key: pk.clone().into(),
-                        new_diversifier: "oct".to_string(),
-                    };
-                    Some(sh)
-                }
-                _ => None,
-            };
-            let header: AnyHeader = th.unwrap().try_into().unwrap();
+        // for header in support {
+        //     debug!(
+        //         "building a MsgUpdateAnyClient for intermediate height {}",
+        //         header.height(),
+        //     );
+        //     let sequence = header.height().revision_height();
+        //     let timestamp = header.timestamp().nanoseconds();
+        //     let sig_data =
+        //         alice_sign_sign_bytes(sequence, timestamp, DataType::Header.into(), buf.to_vec());
+        //     let th = match header {
+        //         AnyHeader::Tendermint(header) => {
+        //             let th: TmHeader = TmHeader::from(header);
+        //             println!("ys-debug: TmHeader: {:?}", th.timestamp());
+        //             let sh = SmHeader {
+        //                 sequence,
+        //                 timestamp: th.timestamp().nanoseconds(),
+        //                 signature: sig_data,
+        //                 new_public_key: pk.clone().into(),
+        //                 new_diversifier: "oct".to_string(),
+        //             };
+        //             Some(sh)
+        //         }
+        //         _ => None,
+        //     };
+        //     let header: AnyHeader = th.unwrap().try_into().unwrap();
 
-            msgs.push(MsgUpdateClient {
-                header: header.into(),
-                client_id: self.id.clone(),
-                signer: signer.clone(),
-            });
-        }
+        //     msgs.push(MsgUpdateClient {
+        //         header: header.into(),
+        //         client_id: self.id.clone(),
+        //         signer: signer.clone(),
+        //     });
+        // }
 
         debug!(
             "building a MsgUpdateAnyClient from trusted height {} to target height {}",
             trusted_height,
             header.height(),
         );
-        let sequence = header.height().revision_height();
+        let sequence = client_state.latest_height().revision_height();
         let timestamp = header.timestamp().nanoseconds();
         let sig_data =
             alice_sign_sign_bytes(sequence, timestamp, DataType::Header.into(), buf.to_vec());
         let th = match header {
             AnyHeader::Tendermint(header) => {
                 let th: TmHeader = TmHeader::from(header);
-                println!("ys-debug: TmHeader: {:?}", th);
+                println!("ys-debug: TmHeader: {:?}", th.timestamp());
                 let sh = SmHeader {
-                    sequence: th.height().revision_height(),
-                    timestamp: th.timestamp().nanoseconds(),
+                    sequence,
+                    timestamp,
                     signature: sig_data,
                     new_public_key: pk.clone().into(),
                     new_diversifier: "oct".to_string(),
@@ -1312,7 +1317,6 @@ impl<DstChain: ChainHandle, SrcChain: ChainHandle> ForeignClient<DstChain, SrcCh
             msgs.len() as u64
         );
 
-        let msgs = vec![];
         Ok(msgs)
     }
 

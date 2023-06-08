@@ -32,7 +32,9 @@ use crate::util::retry::{retry_with_index, RetryResult};
 use crate::util::task::Next;
 
 mod error;
+use crate::chain::requests::QueryClientStateRequest;
 pub use error::ConnectionError;
+use ibc_relayer_types::proofs::Proofs;
 
 /// Maximum value allowed for packet delay on any new connection that the relayer establishes.
 pub const MAX_PACKET_DELAY: Duration = Duration::from_secs(120);
@@ -999,25 +1001,38 @@ impl<ChainA: ChainHandle, ChainB: ChainHandle> Connection<ChainA, ChainB> {
             .dst_chain()
             .query_latest_height()
             .map_err(|e| ConnectionError::chain_query(self.dst_chain().id(), e))?;
-        let client_msgs = self.build_update_client_on_src(src_client_target_height)?;
+        // let client_msgs = self.build_update_client_on_src(src_client_target_height)?;
 
-        let tm =
-            TrackedMsgs::new_static(client_msgs, "update client on source for ConnectionOpenTry");
-        self.src_chain()
-            .send_messages_and_wait_commit(tm)
-            .map_err(|e| ConnectionError::submit(self.src_chain().id(), e))?;
+        // let tm =
+        //     TrackedMsgs::new_static(client_msgs, "update client on source for ConnectionOpenTry");
+        // self.src_chain()
+        //     .send_messages_and_wait_commit(tm)
+        //     .map_err(|e| ConnectionError::submit(self.src_chain().id(), e))?;
 
-        let query_height = self
-            .src_chain()
-            .query_latest_height()
-            .map_err(|e| ConnectionError::chain_query(self.src_chain().id(), e))?;
+        let (client_state, _) = {
+            self.dst_chain()
+                .query_client_state(
+                    QueryClientStateRequest {
+                        client_id: self.dst_client_id().clone(),
+                        height: QueryHeight::Latest,
+                    },
+                    IncludeProof::No,
+                )
+                .map_err(|e| ConnectionError::relayer(e))?
+        };
+        println!("ys-debug: client_state: {:?}", client_state);
+        let h = client_state.latest_height();
+        // let query_height = self
+        //     .src_chain()
+        //     .query_latest_height()
+        //     .map_err(|e| ConnectionError::chain_query(self.src_chain().id(), e))?;
         let (client_state, proofs) = self
             .src_chain()
             .build_connection_proofs_and_client_state(
                 ConnectionMsgType::OpenTry,
                 src_connection_id,
                 self.src_client_id(),
-                query_height,
+                h,
             )
             .map_err(ConnectionError::connection_proof)?;
 
@@ -1055,13 +1070,23 @@ impl<ChainA: ChainHandle, ChainB: ChainHandle> Connection<ChainA, ChainB> {
             src_connection.counterparty().connection_id.clone()
         };
 
+        println!("ys-debug: client_state2: {:?}", client_state);
+        let p = Proofs::new(
+            proofs.object_proof().clone(),
+            proofs.client_proof().clone(),
+            proofs.consensus_proof(),
+            None,
+            h.increment(),
+        )
+        .unwrap();
+        println!("ys-debug: proof: {:?}", p);
         let new_msg = MsgConnectionOpenTry {
             client_id: self.dst_client_id().clone(),
             client_state: client_state.map(Into::into),
             previous_connection_id,
             counterparty,
             counterparty_versions,
-            proofs,
+            proofs: p,
             delay_period: delay,
             signer,
         };
@@ -1139,19 +1164,32 @@ impl<ChainA: ChainHandle, ChainB: ChainHandle> Connection<ChainA, ChainB> {
             .query_latest_height()
             .map_err(|e| ConnectionError::chain_query(self.dst_chain().id(), e))?;
 
-        let client_msgs = self.build_update_client_on_src(src_client_target_height)?;
+        // let client_msgs = self.build_update_client_on_src(src_client_target_height)?;
 
-        let tm =
-            TrackedMsgs::new_static(client_msgs, "update client on source for ConnectionOpenAck");
+        // let tm =
+        //     TrackedMsgs::new_static(client_msgs, "update client on source for ConnectionOpenAck");
 
-        self.src_chain()
-            .send_messages_and_wait_commit(tm)
-            .map_err(|e| ConnectionError::submit(self.src_chain().id(), e))?;
+        // self.src_chain()
+        //     .send_messages_and_wait_commit(tm)
+        //     .map_err(|e| ConnectionError::submit(self.src_chain().id(), e))?;
 
-        let query_height = self
-            .src_chain()
-            .query_latest_height()
-            .map_err(|e| ConnectionError::chain_query(self.src_chain().id(), e))?;
+        let (client_state, _) = {
+            self.dst_chain()
+                .query_client_state(
+                    QueryClientStateRequest {
+                        client_id: self.dst_client_id().clone(),
+                        height: QueryHeight::Latest,
+                    },
+                    IncludeProof::No,
+                )
+                .map_err(|e| ConnectionError::relayer(e))?
+        };
+        println!("ys-debug: client_state: {:?}", client_state);
+        let h = client_state.latest_height();
+        // let query_height = self
+        //     .src_chain()
+        //     .query_latest_height()
+        //     .map_err(|e| ConnectionError::chain_query(self.src_chain().id(), e))?;
 
         let (client_state, proofs) = self
             .src_chain()
@@ -1159,7 +1197,7 @@ impl<ChainA: ChainHandle, ChainB: ChainHandle> Connection<ChainA, ChainB> {
                 ConnectionMsgType::OpenAck,
                 src_connection_id,
                 self.src_client_id(),
-                query_height,
+                h,
             )
             .map_err(ConnectionError::connection_proof)?;
 
@@ -1172,11 +1210,19 @@ impl<ChainA: ChainHandle, ChainB: ChainHandle> Connection<ChainA, ChainB> {
             .get_signer()
             .map_err(|e| ConnectionError::signer(self.dst_chain().id(), e))?;
 
+        let p = Proofs::new(
+            proofs.object_proof().clone(),
+            proofs.client_proof().clone(),
+            proofs.consensus_proof(),
+            None,
+            h.increment(),
+        )
+        .unwrap();
         let new_msg = MsgConnectionOpenAck {
             connection_id: dst_connection_id.clone(),
             counterparty_connection_id: src_connection_id.clone(),
             client_state: client_state.map(Into::into),
-            proofs,
+            proofs: p,
             version: src_connection.versions()[0].clone(),
             signer,
         };
@@ -1247,6 +1293,19 @@ impl<ChainA: ChainHandle, ChainB: ChainHandle> Connection<ChainA, ChainB> {
             )
             .map_err(|e| ConnectionError::connection_query(src_connection_id.clone(), e))?;
 
+        let (client_state, _) = {
+            self.dst_chain()
+                .query_client_state(
+                    QueryClientStateRequest {
+                        client_id: self.dst_client_id().clone(),
+                        height: QueryHeight::Latest,
+                    },
+                    IncludeProof::No,
+                )
+                .map_err(|e| ConnectionError::relayer(e))?
+        };
+        println!("ys-debug: client_state: {:?}", client_state);
+        let h = client_state.latest_height();
         // TODO - check that the src connection is consistent with the confirm options
 
         let (_, proofs) = self
@@ -1255,7 +1314,7 @@ impl<ChainA: ChainHandle, ChainB: ChainHandle> Connection<ChainA, ChainB> {
                 ConnectionMsgType::OpenConfirm,
                 src_connection_id,
                 self.src_client_id(),
-                query_height,
+                h,
             )
             .map_err(ConnectionError::connection_proof)?;
 
@@ -1268,9 +1327,18 @@ impl<ChainA: ChainHandle, ChainB: ChainHandle> Connection<ChainA, ChainB> {
             .get_signer()
             .map_err(|e| ConnectionError::signer(self.dst_chain().id(), e))?;
 
+        let p = Proofs::new(
+            proofs.object_proof().clone(),
+            proofs.client_proof().clone(),
+            proofs.consensus_proof(),
+            None,
+            h.increment(),
+        )
+        .unwrap();
+        println!("ys-debug: proof: {:?}", p);
         let new_msg = MsgConnectionOpenConfirm {
             connection_id: dst_connection_id.clone(),
-            proofs,
+            proofs: p,
             signer,
         };
 

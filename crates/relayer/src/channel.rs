@@ -42,6 +42,9 @@ pub mod error;
 pub mod version;
 use version::Version;
 
+use crate::chain::requests::QueryClientStateRequest;
+use ibc_relayer_types::proofs::Proofs;
+
 pub mod channel_handshake_retry {
     //! Provides utility methods and constants to configure the retry behavior
     //! for the channel handshake algorithm.
@@ -1004,14 +1007,27 @@ impl<ChainA: ChainHandle, ChainB: ChainHandle> Channel<ChainA, ChainB> {
             )
             .map_err(|e| ChannelError::query(self.dst_chain().id(), e))?;
 
-        let query_height = self
-            .src_chain()
-            .query_latest_height()
-            .map_err(|e| ChannelError::query(self.src_chain().id(), e))?;
+        let (client_state, _) = {
+            self.dst_chain()
+                .query_client_state(
+                    QueryClientStateRequest {
+                        client_id: self.dst_client_id().clone(),
+                        height: QueryHeight::Latest,
+                    },
+                    IncludeProof::No,
+                )
+                .map_err(|e| ChannelError::relayer(e))?
+        };
+        println!("ys-debug: client_state: {:?}", client_state);
+        let h = client_state.latest_height();
+        // let query_height = self
+        //     .src_chain()
+        //     .query_latest_height()
+        //     .map_err(|e| ChannelError::query(self.src_chain().id(), e))?;
 
         let proofs = self
             .src_chain()
-            .build_channel_proofs(self.src_port_id(), src_channel_id, query_height)
+            .build_channel_proofs(self.src_port_id(), src_channel_id, h)
             .map_err(ChannelError::channel_proof)?;
 
         // Build message(s) to update client on destination
@@ -1043,13 +1059,22 @@ impl<ChainA: ChainHandle, ChainB: ChainHandle> Channel<ChainA, ChainB> {
             src_channel.counterparty().channel_id.clone()
         };
 
+        let p = Proofs::new(
+            proofs.object_proof().clone(),
+            proofs.client_proof().clone(),
+            proofs.consensus_proof(),
+            None,
+            h.increment(),
+        )
+        .unwrap();
+        println!("ys-debug: proof: {:?}", p);
         // Build the domain type message
         let new_msg = MsgChannelOpenTry {
             port_id: self.dst_port_id().clone(),
             previous_channel_id,
             counterparty_version: src_channel.version().clone(),
             channel,
-            proofs,
+            proofs: p,
             signer,
         };
 
@@ -1124,14 +1149,27 @@ impl<ChainA: ChainHandle, ChainB: ChainHandle> Channel<ChainA, ChainB> {
             )
             .map_err(|e| ChannelError::query(self.dst_chain().id(), e))?;
 
-        let query_height = self
-            .src_chain()
-            .query_latest_height()
-            .map_err(|e| ChannelError::query(self.src_chain().id(), e))?;
+        let (client_state, _) = {
+            self.dst_chain()
+                .query_client_state(
+                    QueryClientStateRequest {
+                        client_id: self.dst_client_id().clone(),
+                        height: QueryHeight::Latest,
+                    },
+                    IncludeProof::No,
+                )
+                .map_err(|e| ChannelError::relayer(e))?
+        };
+        println!("ys-debug: client_state: {:?}", client_state);
+        let h = client_state.latest_height();
+        // let query_height = self
+        //     .src_chain()
+        //     .query_latest_height()
+        //     .map_err(|e| ChannelError::query(self.src_chain().id(), e))?;
 
         let proofs = self
             .src_chain()
-            .build_channel_proofs(self.src_port_id(), src_channel_id, query_height)
+            .build_channel_proofs(self.src_port_id(), src_channel_id, h)
             .map_err(ChannelError::channel_proof)?;
 
         // Build message(s) to update client on destination
@@ -1143,13 +1181,22 @@ impl<ChainA: ChainHandle, ChainB: ChainHandle> Channel<ChainA, ChainB> {
             .get_signer()
             .map_err(|e| ChannelError::fetch_signer(self.dst_chain().id(), e))?;
 
+        let p = Proofs::new(
+            proofs.object_proof().clone(),
+            proofs.client_proof().clone(),
+            proofs.consensus_proof(),
+            None,
+            h.increment(),
+        )
+        .unwrap();
+        println!("ys-debug: proof: {:?}", p);
         // Build the domain type message
         let new_msg = MsgChannelOpenAck {
             port_id: self.dst_port_id().clone(),
             channel_id: dst_channel_id.clone(),
             counterparty_channel_id: src_channel_id.clone(),
             counterparty_version: src_channel.version().clone(),
-            proofs,
+            proofs: p,
             signer,
         };
 
@@ -1232,14 +1279,27 @@ impl<ChainA: ChainHandle, ChainB: ChainHandle> Channel<ChainA, ChainB> {
             )
             .map_err(|e| ChannelError::query(self.dst_chain().id(), e))?;
 
-        let query_height = self
-            .src_chain()
-            .query_latest_height()
-            .map_err(|e| ChannelError::query(self.src_chain().id(), e))?;
+        let (client_state, _) = {
+            self.dst_chain()
+                .query_client_state(
+                    QueryClientStateRequest {
+                        client_id: self.dst_client_id().clone(),
+                        height: QueryHeight::Latest,
+                    },
+                    IncludeProof::No,
+                )
+                .map_err(|e| ChannelError::relayer(e))?
+        };
+        println!("ys-debug: client_state: {:?}", client_state);
+        let h = client_state.latest_height();
+        // let query_height = self
+        //     .src_chain()
+        //     .query_latest_height()
+        //     .map_err(|e| ChannelError::query(self.src_chain().id(), e))?;
 
         let proofs = self
             .src_chain()
-            .build_channel_proofs(self.src_port_id(), src_channel_id, query_height)
+            .build_channel_proofs(self.src_port_id(), src_channel_id, h)
             .map_err(ChannelError::channel_proof)?;
 
         // Build message(s) to update client on destination
@@ -1251,11 +1311,20 @@ impl<ChainA: ChainHandle, ChainB: ChainHandle> Channel<ChainA, ChainB> {
             .get_signer()
             .map_err(|e| ChannelError::fetch_signer(self.dst_chain().id(), e))?;
 
+        let p = Proofs::new(
+            proofs.object_proof().clone(),
+            proofs.client_proof().clone(),
+            proofs.consensus_proof(),
+            None,
+            h.increment(),
+        )
+        .unwrap();
+        println!("ys-debug: proof: {:?}", p);
         // Build the domain type message
         let new_msg = MsgChannelOpenConfirm {
             port_id: self.dst_port_id().clone(),
             channel_id: dst_channel_id.clone(),
-            proofs,
+            proofs: p,
             signer,
         };
 

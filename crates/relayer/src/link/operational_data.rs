@@ -159,7 +159,8 @@ impl OperationalData {
     ) -> Result<TrackedMsgs, LinkError> {
         // For zero delay we prepend the client update msgs.
         let client_update_msg = if !self.conn_delay_needed() {
-            let update_height = self.proofs_height.increment();
+            // let update_height = self.proofs_height.increment();
+            let update_height = self.proofs_height;
 
             debug!(
                 "prepending {} client update at height {}",

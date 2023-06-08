@@ -47,12 +47,6 @@ use crate::keyring::{AnySigningKeyPair, KeyRing, SigningKeyPairSized};
 use crate::light_client::AnyHeader;
 use crate::misbehaviour::MisbehaviourEvidence;
 
-use ibc_proto::ibc::lightclients::solomachine::v2::{
-    ChannelStateData, ClientStateData, ConnectionStateData, ConsensusStateData, DataType,
-    PacketAcknowledgementData, PacketCommitmentData, TimestampedSignatureData,
-};
-use prost::Message;
-
 /// The result of a health check.
 #[derive(Debug)]
 pub enum HealthCheck {
@@ -403,39 +397,17 @@ pub trait ChainEndpoint: Sized {
         client_id: &ClientId,
         height: ICSHeight,
     ) -> Result<(Option<AnyClientState>, Proofs), Error> {
-        let (connection_end, _maybe_connection_proof) = self.query_connection(
+        let (connection_end, maybe_connection_proof) = self.query_connection(
             QueryConnectionRequest {
                 connection_id: connection_id.clone(),
                 height: QueryHeight::Specific(height),
             },
-            IncludeProof::No,
+            IncludeProof::Yes,
         )?;
 
-        // let Some(connection_proof) = maybe_connection_proof else {
-        //     return Err(Error::queried_proof_not_found());
-        // };
-
-        let mut buf = Vec::new();
-        let data = ConnectionStateData {
-            path: ("/ibc/connections%2F".to_string() + connection_id.as_str()).into(),
-            connection: Some(connection_end.clone().into()),
+        let Some(connection_proof) = maybe_connection_proof else {
+            return Err(Error::queried_proof_not_found());
         };
-        println!("ys-debug: ConnectionStateData: {:?}", data);
-        Message::encode(&data, &mut buf).unwrap();
-
-        let sig_data = super::super::foreign_client::alice_sign_sign_bytes(
-            height.revision_height() + 1,
-            9999,
-            DataType::ConnectionState.into(),
-            buf.to_vec(),
-        );
-
-        let timestamped = TimestampedSignatureData {
-            signature_data: sig_data,
-            timestamp: 9999,
-        };
-        let mut connection_proof = Vec::new();
-        Message::encode(&timestamped, &mut connection_proof).unwrap();
 
         // Check that the connection state is compatible with the message
         match message_type {
@@ -466,42 +438,17 @@ pub trait ChainEndpoint: Sized {
 
         match message_type {
             ConnectionMsgType::OpenTry | ConnectionMsgType::OpenAck => {
-                let (client_state_value, _maybe_client_state_proof) = self.query_client_state(
+                let (client_state_value, maybe_client_state_proof) = self.query_client_state(
                     QueryClientStateRequest {
                         client_id: client_id.clone(),
                         height: QueryHeight::Specific(height),
                     },
-                    IncludeProof::No,
+                    IncludeProof::Yes,
                 )?;
 
-                // let Some(client_state_proof) = maybe_client_state_proof else {
-                //     return Err(Error::queried_proof_not_found());
-                // };
-
-                let mut buf = Vec::new();
-                let data = ClientStateData {
-                    path: ("/ibc/clients%2F".to_string()
-                        + client_id.as_str()
-                        + &"%2FclientState".to_string())
-                        .into(),
-                    client_state: Some(client_state_value.clone().into()),
+                let Some(client_state_proof) = maybe_client_state_proof else {
+                    return Err(Error::queried_proof_not_found());
                 };
-                println!("ys-debug: ClientStateData: {:?}", data);
-                Message::encode(&data, &mut buf).unwrap();
-
-                let sig_data = super::super::foreign_client::alice_sign_sign_bytes(
-                    height.revision_height() + 2,
-                    9999,
-                    DataType::ClientState.into(),
-                    buf.to_vec(),
-                );
-
-                let timestamped = TimestampedSignatureData {
-                    signature_data: sig_data,
-                    timestamp: 9999,
-                };
-                let mut client_state_proof = Vec::new();
-                Message::encode(&timestamped, &mut client_state_proof).unwrap();
 
                 client_proof = Some(
                     CommitmentProofBytes::try_from(client_state_proof)
@@ -509,47 +456,18 @@ pub trait ChainEndpoint: Sized {
                 );
 
                 let consensus_state_proof = {
-                    let (consensus_state_value, _maybe_consensus_state_proof) = self
-                        .query_consensus_state(
-                            QueryConsensusStateRequest {
-                                client_id: client_id.clone(),
-                                consensus_height: client_state_value.latest_height(),
-                                query_height: QueryHeight::Specific(height),
-                            },
-                            IncludeProof::No,
-                        )?;
+                    let (_, maybe_consensus_state_proof) = self.query_consensus_state(
+                        QueryConsensusStateRequest {
+                            client_id: client_id.clone(),
+                            consensus_height: client_state_value.latest_height(),
+                            query_height: QueryHeight::Specific(height),
+                        },
+                        IncludeProof::Yes,
+                    )?;
 
-                    // let Some(consensus_state_proof) = maybe_consensus_state_proof else {
-                    //     return Err(Error::queried_proof_not_found());
-                    // };
-                    let mut buf = Vec::new();
-                    let data = ConsensusStateData {
-                        path: ("/ibc/clients%2F".to_string()
-                            + client_id.as_str()
-                            + &"%2FconsensusStates%2F0-".to_string()
-                            + &client_state_value
-                                .latest_height()
-                                .revision_height()
-                                .to_string())
-                            .into(),
-                        consensus_state: Some(consensus_state_value.clone().into()),
+                    let Some(consensus_state_proof) = maybe_consensus_state_proof else {
+                        return Err(Error::queried_proof_not_found());
                     };
-                    println!("ys-debug: ConsensusStateData: {:?}", data);
-                    Message::encode(&data, &mut buf).unwrap();
-
-                    let sig_data = super::super::foreign_client::alice_sign_sign_bytes(
-                        height.revision_height() + 3,
-                        9999,
-                        DataType::ConsensusState.into(),
-                        buf.to_vec(),
-                    );
-
-                    let timestamped = TimestampedSignatureData {
-                        signature_data: sig_data,
-                        timestamp: 9999,
-                    };
-                    let mut consensus_state_proof = Vec::new();
-                    Message::encode(&timestamped, &mut consensus_state_proof).unwrap();
 
                     consensus_state_proof
                 };
@@ -589,43 +507,18 @@ pub trait ChainEndpoint: Sized {
         height: ICSHeight,
     ) -> Result<Proofs, Error> {
         // Collect all proofs as required
-        let (channel_end, _maybe_channel_proof) = self.query_channel(
+        let (_, maybe_channel_proof) = self.query_channel(
             QueryChannelRequest {
                 port_id: port_id.clone(),
                 channel_id: channel_id.clone(),
                 height: QueryHeight::Specific(height),
             },
-            IncludeProof::No,
+            IncludeProof::Yes,
         )?;
 
-        // let Some(channel_proof) = maybe_channel_proof else {
-        //     return Err(Error::queried_proof_not_found());
-        // };
-        let mut buf = Vec::new();
-        let data = ChannelStateData {
-            path: ("/ibc/channelEnds%2Fports%2F".to_string()
-                + port_id.as_str()
-                + &"%2Fchannels%2F".to_string()
-                + channel_id.as_str())
-            .into(),
-            channel: Some(channel_end.clone().into()),
+        let Some(channel_proof) = maybe_channel_proof else {
+            return Err(Error::queried_proof_not_found());
         };
-        println!("ys-debug: ChannelStateData: {:?}", data);
-        Message::encode(&data, &mut buf).unwrap();
-
-        let sig_data = super::super::foreign_client::alice_sign_sign_bytes(
-            height.revision_height() + 1,
-            9999,
-            DataType::ChannelState.into(),
-            buf.to_vec(),
-        );
-
-        let timestamped = TimestampedSignatureData {
-            signature_data: sig_data,
-            timestamp: 9999,
-        };
-        let mut channel_proof = Vec::new();
-        Message::encode(&timestamped, &mut channel_proof).unwrap();
 
         let channel_proof_bytes =
             CommitmentProofBytes::try_from(channel_proof).map_err(Error::malformed_proof)?;
@@ -643,178 +536,121 @@ pub trait ChainEndpoint: Sized {
         sequence: Sequence,
         height: ICSHeight,
     ) -> Result<Proofs, Error> {
-        let mut buf = Vec::new();
         let (maybe_packet_proof, channel_proof) = match packet_type {
             PacketMsgType::Recv => {
-                let (packet, _maybe_packet_proof) = self.query_packet_commitment(
+                let (_, maybe_packet_proof) = self.query_packet_commitment(
                     QueryPacketCommitmentRequest {
-                        port_id: port_id.clone(),
-                        channel_id: channel_id.clone(),
+                        port_id,
+                        channel_id,
                         sequence,
                         height: QueryHeight::Specific(height),
                     },
-                    IncludeProof::No,
+                    IncludeProof::Yes,
                 )?;
-                let data = PacketCommitmentData {
-                    path: ("/ibc/commitments%2Fports%2F".to_string()
-                        + port_id.as_str()
-                        + "%2Fchannels%2F"
-                        + channel_id.as_str()
-                        + "%2Fsequences%2F"
-                        + &sequence.to_string())
-                        .into(),
-                    commitment: packet.clone().into(),
-                };
-                println!("ys-debug: PacketCommitmentData: {:?}", data);
-                Message::encode(&data, &mut buf).unwrap();
 
-                let sig_data = super::super::foreign_client::alice_sign_sign_bytes(
-                    height.revision_height() + 1,
-                    9999,
-                    DataType::PacketCommitment.into(),
-                    buf.to_vec(),
-                );
-
-                let timestamped = TimestampedSignatureData {
-                    signature_data: sig_data,
-                    timestamp: 9999,
-                };
-                let mut packet_proof = Vec::new();
-                Message::encode(&timestamped, &mut packet_proof).unwrap();
-
-                (Some(packet_proof), None)
+                (maybe_packet_proof, None)
             }
             PacketMsgType::Ack => {
-                let (packet, _maybe_packet_proof) = self.query_packet_acknowledgement(
+                let (_, maybe_packet_proof) = self.query_packet_acknowledgement(
                     QueryPacketAcknowledgementRequest {
-                        port_id: port_id.clone(),
-                        channel_id: channel_id.clone(),
+                        port_id,
+                        channel_id,
                         sequence,
                         height: QueryHeight::Specific(height),
                     },
-                    IncludeProof::No,
+                    IncludeProof::Yes,
                 )?;
-                let data = PacketAcknowledgementData {
-                    path: ("/ibc/acks%2Fports%2F".to_string()
-                        + port_id.as_str()
-                        + "%2Fchannels%2F"
-                        + channel_id.as_str()
-                        + "%2Fsequences%2F"
-                        + &sequence.to_string())
-                        .into(),
-                    acknowledgement: packet.clone().into(),
-                };
-                println!("ys-debug: PacketAcknowledgementData: {:?}", data);
-                Message::encode(&data, &mut buf).unwrap();
 
-                let sig_data = super::super::foreign_client::alice_sign_sign_bytes(
-                    height.revision_height() + 1,
-                    9999,
-                    DataType::PacketAcknowledgement.into(),
-                    buf.to_vec(),
-                );
-
-                let timestamped = TimestampedSignatureData {
-                    signature_data: sig_data,
-                    timestamp: 9999,
-                };
-                let mut packet_proof = Vec::new();
-                Message::encode(&timestamped, &mut packet_proof).unwrap();
-
-                (Some(packet_proof), None)
+                (maybe_packet_proof, None)
             }
             PacketMsgType::TimeoutUnordered => {
-                // let (_, maybe_packet_proof) = self.query_packet_receipt(
-                //     QueryPacketReceiptRequest {
-                //         port_id,
-                //         channel_id,
-                //         sequence,
-                //         height: QueryHeight::Specific(height),
-                //     },
-                //     IncludeProof::Yes,
-                // )?;
+                let (_, maybe_packet_proof) = self.query_packet_receipt(
+                    QueryPacketReceiptRequest {
+                        port_id,
+                        channel_id,
+                        sequence,
+                        height: QueryHeight::Specific(height),
+                    },
+                    IncludeProof::Yes,
+                )?;
 
-                // (maybe_packet_proof, None)
-                (None, None)
+                (maybe_packet_proof, None)
             }
             PacketMsgType::TimeoutOrdered => {
-                // let (_, maybe_packet_proof) = self.query_next_sequence_receive(
-                //     QueryNextSequenceReceiveRequest {
-                //         port_id,
-                //         channel_id,
-                //         height: QueryHeight::Specific(height),
-                //     },
-                //     IncludeProof::Yes,
-                // )?;
+                let (_, maybe_packet_proof) = self.query_next_sequence_receive(
+                    QueryNextSequenceReceiveRequest {
+                        port_id,
+                        channel_id,
+                        height: QueryHeight::Specific(height),
+                    },
+                    IncludeProof::Yes,
+                )?;
 
-                // (maybe_packet_proof, None)
-                (None, None)
+                (maybe_packet_proof, None)
             }
             PacketMsgType::TimeoutOnCloseUnordered => {
-                // let channel_proof = {
-                //     let (_, maybe_channel_proof) = self.query_channel(
-                //         QueryChannelRequest {
-                //             port_id: port_id.clone(),
-                //             channel_id: channel_id.clone(),
-                //             height: QueryHeight::Specific(height),
-                //         },
-                //         IncludeProof::Yes,
-                //     )?;
+                let channel_proof = {
+                    let (_, maybe_channel_proof) = self.query_channel(
+                        QueryChannelRequest {
+                            port_id: port_id.clone(),
+                            channel_id: channel_id.clone(),
+                            height: QueryHeight::Specific(height),
+                        },
+                        IncludeProof::Yes,
+                    )?;
 
-                //     let Some(channel_merkle_proof) = maybe_channel_proof else {
-                //         return Err(Error::queried_proof_not_found());
-                //     };
+                    let Some(channel_merkle_proof) = maybe_channel_proof else {
+                        return Err(Error::queried_proof_not_found());
+                    };
 
-                //     Some(
-                //         CommitmentProofBytes::try_from(channel_merkle_proof)
-                //             .map_err(Error::malformed_proof)?,
-                //     )
-                // };
+                    Some(
+                        CommitmentProofBytes::try_from(channel_merkle_proof)
+                            .map_err(Error::malformed_proof)?,
+                    )
+                };
 
-                // let (_, maybe_packet_proof) = self.query_packet_receipt(
-                //     QueryPacketReceiptRequest {
-                //         port_id,
-                //         channel_id,
-                //         sequence,
-                //         height: QueryHeight::Specific(height),
-                //     },
-                //     IncludeProof::Yes,
-                // )?;
+                let (_, maybe_packet_proof) = self.query_packet_receipt(
+                    QueryPacketReceiptRequest {
+                        port_id,
+                        channel_id,
+                        sequence,
+                        height: QueryHeight::Specific(height),
+                    },
+                    IncludeProof::Yes,
+                )?;
 
-                // (maybe_packet_proof, channel_proof)
-                (None, None)
+                (maybe_packet_proof, channel_proof)
             }
             PacketMsgType::TimeoutOnCloseOrdered => {
-                // let channel_proof = {
-                //     let (_, maybe_channel_proof) = self.query_channel(
-                //         QueryChannelRequest {
-                //             port_id: port_id.clone(),
-                //             channel_id: channel_id.clone(),
-                //             height: QueryHeight::Specific(height),
-                //         },
-                //         IncludeProof::Yes,
-                //     )?;
+                let channel_proof = {
+                    let (_, maybe_channel_proof) = self.query_channel(
+                        QueryChannelRequest {
+                            port_id: port_id.clone(),
+                            channel_id: channel_id.clone(),
+                            height: QueryHeight::Specific(height),
+                        },
+                        IncludeProof::Yes,
+                    )?;
 
-                //     let Some(channel_merkle_proof) = maybe_channel_proof else {
-                //         return Err(Error::queried_proof_not_found());
-                //     };
+                    let Some(channel_merkle_proof) = maybe_channel_proof else {
+                        return Err(Error::queried_proof_not_found());
+                    };
 
-                //     Some(
-                //         CommitmentProofBytes::try_from(channel_merkle_proof)
-                //             .map_err(Error::malformed_proof)?,
-                //     )
-                // };
-                // let (_, maybe_packet_proof) = self.query_next_sequence_receive(
-                //     QueryNextSequenceReceiveRequest {
-                //         port_id,
-                //         channel_id,
-                //         height: QueryHeight::Specific(height),
-                //     },
-                //     IncludeProof::Yes,
-                // )?;
+                    Some(
+                        CommitmentProofBytes::try_from(channel_merkle_proof)
+                            .map_err(Error::malformed_proof)?,
+                    )
+                };
+                let (_, maybe_packet_proof) = self.query_next_sequence_receive(
+                    QueryNextSequenceReceiveRequest {
+                        port_id,
+                        channel_id,
+                        height: QueryHeight::Specific(height),
+                    },
+                    IncludeProof::Yes,
+                )?;
 
-                // (maybe_packet_proof, channel_proof)
-                (None, None)
+                (maybe_packet_proof, channel_proof)
             }
         };
 

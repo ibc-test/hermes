@@ -62,6 +62,9 @@ use crate::util::collate::CollatedIterExt;
 use crate::util::pretty::PrettyEvents;
 use crate::util::queue::Queue;
 
+use crate::chain::requests::QueryClientStateRequest;
+use ibc_relayer_types::proofs::Proofs;
+
 const MAX_RETRIES: usize = 5;
 
 /// Whether or not to resubmit packets when pending transactions
@@ -1199,6 +1202,20 @@ impl<ChainA: ChainHandle, ChainB: ChainHandle> RelayPath<ChainA, ChainB> {
     }
 
     fn build_recv_packet(&self, packet: &Packet, height: Height) -> Result<Option<Any>, LinkError> {
+        let (client_state, _) = {
+            self.dst_chain()
+                .query_client_state(
+                    QueryClientStateRequest {
+                        client_id: self.dst_client_id().clone(),
+                        height: QueryHeight::Latest,
+                    },
+                    IncludeProof::No,
+                )
+                .map_err(|e| LinkError::relayer(e))?
+        };
+        println!("ys-debug: client_state: {:?}", client_state);
+        let h = client_state.latest_height();
+
         let proofs = self
             .src_chain()
             .build_packet_proofs(
@@ -1206,11 +1223,20 @@ impl<ChainA: ChainHandle, ChainB: ChainHandle> RelayPath<ChainA, ChainB> {
                 &packet.source_port,
                 &packet.source_channel,
                 packet.sequence,
-                height,
+                Height::new(h.revision_height(), height.revision_height()).unwrap(),
             )
             .map_err(|e| LinkError::packet_proofs_constructor(self.src_chain().id(), e))?;
 
-        let msg = MsgRecvPacket::new(packet.clone(), proofs.clone(), self.dst_signer()?);
+        let p = Proofs::new(
+            proofs.object_proof().clone(),
+            proofs.client_proof().clone(),
+            proofs.consensus_proof(),
+            proofs.other_proof().clone(),
+            h.increment(),
+        )
+        .unwrap();
+        println!("ys-debug: proof: {:?}", p);
+        let msg = MsgRecvPacket::new(packet.clone(), p, self.dst_signer()?);
 
         trace!(packet = %packet, height = %proofs.height(), "built recv_packet msg");
 
@@ -1222,6 +1248,19 @@ impl<ChainA: ChainHandle, ChainB: ChainHandle> RelayPath<ChainA, ChainB> {
         event: &WriteAcknowledgement,
         height: Height,
     ) -> Result<Option<Any>, LinkError> {
+        let (client_state, _) = {
+            self.dst_chain()
+                .query_client_state(
+                    QueryClientStateRequest {
+                        client_id: self.dst_client_id().clone(),
+                        height: QueryHeight::Latest,
+                    },
+                    IncludeProof::No,
+                )
+                .map_err(|e| LinkError::relayer(e))?
+        };
+        println!("ys-debug: client_state: {:?}", client_state);
+        let h = client_state.latest_height();
         let packet = event.packet.clone();
 
         let proofs = self
@@ -1231,16 +1270,20 @@ impl<ChainA: ChainHandle, ChainB: ChainHandle> RelayPath<ChainA, ChainB> {
                 &packet.destination_port,
                 &packet.destination_channel,
                 packet.sequence,
-                height,
+                Height::new(h.revision_height(), height.revision_height()).unwrap(),
             )
             .map_err(|e| LinkError::packet_proofs_constructor(self.src_chain().id(), e))?;
 
-        let msg = MsgAcknowledgement::new(
-            packet,
-            event.ack.clone().into(),
-            proofs.clone(),
-            self.dst_signer()?,
-        );
+        let p = Proofs::new(
+            proofs.object_proof().clone(),
+            proofs.client_proof().clone(),
+            proofs.consensus_proof(),
+            proofs.other_proof().clone(),
+            h.increment(),
+        )
+        .unwrap();
+        println!("ys-debug: proof: {:?}", p);
+        let msg = MsgAcknowledgement::new(packet, event.ack.clone().into(), p, self.dst_signer()?);
 
         trace!(packet = %msg.packet, height = %proofs.height(), "built acknowledgment msg");
 
