@@ -437,8 +437,8 @@ impl SubstrateChain {
                 // use default signer
 
                 let key_pair: Sr25519KeyPair = self.key()?;
-                let signer = PairSigner::new(key_pair.pair());
-                // let signer = PairSigner::new(AccountKeyring::Alice.pair());
+                // let signer = PairSigner::new(key_pair.pair());
+                let signer = PairSigner::new(AccountKeyring::Alice.pair());
 
                 let binding = rpc.tx();
 
